@@ -1,0 +1,8 @@
+# build artifacts
+/build/
+
+# editor / IDE config
+/.vscode/
+
+# large binary docs (kept locally, not tracked)
+/*.pdf
