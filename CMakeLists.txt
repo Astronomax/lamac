@@ -19,6 +19,7 @@ add_executable(lamac
     src/lexer.cpp
     src/ast.cpp
     src/parser.cpp
+    src/regexp.cpp
 )
 
 target_include_directories(lamac PRIVATE src)

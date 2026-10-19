@@ -97,7 +97,7 @@ reconstruct(int i, int j, nonterminal nt1, size_t alt1,
 node_ptr
 parse(const std::vector<token> &tokens)
 {
-    size_t n = tokens.size();
+    int n = tokens.size();
     /*
      * i, j - range bounds of the input,    0, ..., N
      * nt   - nonterminal,                  0, ..., nonterminal_max
@@ -110,7 +110,7 @@ parse(const std::vector<token> &tokens)
     for (int len = 1; len <= n; len++) {
         for (int i = 0; i + len <= n; i++) {
             int j = i + len;
-            /* 
+            /*
              * Unit productions (A -> B) link nonterminals on the same segment,
              * so a single pass in enum order is not enough. Repeat until dp_agg
              * stops growing.
