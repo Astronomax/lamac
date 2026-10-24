@@ -1,5 +1,6 @@
 #include "lexer.h"
 
+#include "cassert"
 #include "cctype"
 #include "regexp.h"
 
@@ -10,9 +11,19 @@ lex(const std::string &src)
     size_t pos = 0;
     size_t n = src.size();
 
+    bool eol_comment = false;
+    bool block_comment = false;
+
     while (pos < n) {
+        const char c = src[pos];
+        if (eol_comment) {
+            if (c == '\n')
+                eol_comment = false;
+            pos += 1;
+            continue;
+        }
         /* Skip whitespace. */
-        if (std::isspace(static_cast<unsigned char>(src[pos]))) {
+        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
             pos += 1;
             continue;
         }
@@ -31,8 +42,24 @@ lex(const std::string &src)
             pos += 1;
             continue;
         }
-        tokens.push_back({best->type, src.substr(pos, best_len)});
+        if (block_comment) {
+            if (best->type == BLOCK_COMMENT_END)
+                block_comment = false;
+            pos += 1;
+            continue;
+        }
         pos += best_len;
+        if (best->type == EOL_COMMENT) {
+            assert(!eol_comment && !block_comment);
+            eol_comment = true;
+            continue;
+        }
+        if (best->type == BLOCK_COMMENT_BEGIN) {
+            assert(!eol_comment && !block_comment);
+            block_comment = true;
+            continue;
+        }
+        tokens.push_back({best->type, src.substr(pos, best_len)});
     }
     return tokens;
 }
