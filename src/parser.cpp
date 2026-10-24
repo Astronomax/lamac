@@ -167,8 +167,8 @@ parse(const std::vector<token> &tokens)
             }
         }
     }
-    int alt = dp_agg(0, n, EXPR);
+    int alt = dp_agg(0, n, SCOPE_EXPR);
     if (alt == -1)
         return nullptr;
-    return reconstruct(0, n, EXPR, alt, tokens, dp, dp_agg);
+    return reconstruct(0, n, SCOPE_EXPR, alt, tokens, dp, dp_agg);
 }

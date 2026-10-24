@@ -36,9 +36,11 @@ struct number_literal : ast_node {
     number_literal(token t) : num(std::move(t)) {}
 };
 
-struct paren_expr : ast_node {
-    node_ptr inner;
-    paren_expr(node_ptr e) : inner(std::move(e)) {}
+struct builtin_call : ast_node {
+    token name;
+    node_ptr arg;
+    builtin_call(token n, node_ptr a = nullptr)
+        : name(std::move(n)), arg(std::move(a)) {}
 };
 
 struct compare : ast_node {
@@ -47,6 +49,29 @@ struct compare : ast_node {
     node_ptr rhs;
     compare(terminal op, node_ptr l, node_ptr r)
         : op(op), lhs(std::move(l)), rhs(std::move(r)) {}
+};
+
+struct seq_node : ast_node {
+    std::vector<node_ptr> items;
+};
+
+struct var_def_item_node : ast_node {
+    token name;
+    node_ptr init;
+    var_def_item_node(token n, node_ptr i = nullptr)
+        : name(std::move(n)), init(std::move(i)) {}
+};
+
+struct var_def_node : ast_node {
+    bool is_public;
+    node_ptr seq;
+    var_def_node(bool pub, node_ptr s) : is_public(pub), seq(std::move(s)) {}
+};
+
+struct scope_expr_node : ast_node {
+    node_ptr defs;
+    node_ptr expr;
+    scope_expr_node(node_ptr d, node_ptr e) : defs(std::move(d)), expr(std::move(e)) {}
 };
 
 using builder_fn = std::function<node_ptr(std::vector<node_ptr> &children)>;
