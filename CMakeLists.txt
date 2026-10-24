@@ -23,3 +23,9 @@ add_executable(lamac
 )
 
 target_include_directories(lamac PRIVATE src)
+
+add_executable(test_regexp
+    tests/test_regexp.cpp
+    src/regexp.cpp
+)
+target_include_directories(test_regexp PRIVATE src)

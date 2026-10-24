@@ -1,10 +1,13 @@
 #include "regexp.h"
 
+#include "cassert"
 #include "algorithm"
 #include "memory"
 #include "set"
+#include "stdexcept"
 #include "string"
 #include "unordered_map"
+#include "unordered_set"
 #include "utility"
 #include "vector"
 
@@ -16,89 +19,106 @@ enum class ast_node_t {
     KLEENE,
     LETTER,
     ANY,
+    EXCEPT,
     EMPTY
 };
 
 struct ast_node {
     ast_node_t t;
-    char c;
+    std::string s;
     std::unique_ptr<ast_node> l, r;
 
-    ast_node(ast_node_t t, char c,
+    ast_node(ast_node_t t, const std::string &s,
              std::unique_ptr<ast_node> l = nullptr,
              std::unique_ptr<ast_node> r = nullptr)
-        : t(t), c(c), l(std::move(l)), r(std::move(r)) {}
+        : t(t), s(s), l(std::move(l)), r(std::move(r)) {}
 };
+
+// Operator priority: lower index = lower precedence = splits first.
+static const char op_chars[] = {'|', '_', '*', '^'};
+static const ast_node_t op_ast[] = {
+    ast_node_t::ALTER, ast_node_t::CONCAT, ast_node_t::KLEENE, ast_node_t::EXCEPT};
+static const int op_count = sizeof(op_chars) / sizeof(*op_chars);
+
+struct ops_key_hash {
+    size_t operator()(const std::pair<int,char> &p) const {
+        return std::hash<int>()((p.first << 8) | (unsigned char)p.second);
+    }
+};
+using ops_map = std::unordered_map<std::pair<int,char>, std::vector<int>, ops_key_hash>;
 
 static std::unique_ptr<ast_node>
 parse(const std::string &t, int l, int r,
     const std::vector<int> &bal,
-    std::unordered_map<int, std::vector<int>> &alt,
-    std::unordered_map<int, std::vector<int>> &con,
-    std::unordered_map<int, std::vector<int>> &kle,
+    ops_map &ops,
     const std::vector<char> &is_lit)
 {
-    if (l >= r) {
-        return std::make_unique<ast_node>(ast_node_t::EMPTY, '#');
-    } else if (l + 1 == r) {
+    if (l >= r)
+        return std::make_unique<ast_node>(ast_node_t::EMPTY, "#");
+    if (l + 1 == r) {
         if (is_lit[l])
-            return std::make_unique<ast_node>(ast_node_t::LETTER, t[l]);
-        else if (t[l] == '.')
-            return std::make_unique<ast_node>(ast_node_t::ANY, '#');
-        else
-            return nullptr;
-    } else {
-        int _con = -1, _alt = -1, _kle = -1;
-        auto it = std::lower_bound(con[bal[l]].begin(), con[bal[l]].end(), r);
-        if (it != con[bal[l]].begin())
-            _con = *(--it);
-        if (_con < l)
-            _con = -1;
-        it = std::lower_bound(alt[bal[l]].begin(), alt[bal[l]].end(), r);
-        if (it != alt[bal[l]].begin())
-            _alt = *(--it);
-        if (_alt < l)
-            _alt = -1;
-        it = std::lower_bound(kle[bal[l]].begin(), kle[bal[l]].end(), r);
-        if (it != kle[bal[l]].begin())
-            _kle = *(--it);
-        if (_kle < l)
-            _kle = -1;
+            return std::make_unique<ast_node>(ast_node_t::LETTER, std::string(1, t[l]));
+        if (t[l] == '.')
+            return std::make_unique<ast_node>(ast_node_t::ANY, "#");
+        return nullptr;
+    }
 
-        if (_alt != -1) {
-            auto l_ = parse(t, l, _alt, bal, alt, con, kle, is_lit);
-            auto r_ = parse(t, _alt + 1, r, bal, alt, con, kle, is_lit);
-            if (!l_)
-                return r_;
-            if (!r_)
-                return l_;
-            return std::make_unique<ast_node>(ast_node_t::ALTER, '#', std::move(l_), std::move(r_));
-        } else if (_con != -1) {
-            auto l_ = parse(t, l, _con, bal, alt, con, kle, is_lit);
-            auto r_ = parse(t, _con + 1, r, bal, alt, con, kle, is_lit);
-            if (!l_)
-                return r_;
-            if (!r_)
-                return l_;
-            return std::make_unique<ast_node>(ast_node_t::CONCAT, '#', std::move(l_), std::move(r_));
-        } else if (_kle != -1) {
-            auto l_ = parse(t, l, _kle, bal, alt, con, kle, is_lit);
-            if (!l_)
-                return nullptr;
-            return std::make_unique<ast_node>(ast_node_t::KLEENE, '#', std::move(l_));
-        } else if (!is_lit[l] && t[l] == '(' && !is_lit[r - 1] && t[r - 1] == ')') {
-            return parse(t, l + 1, r - 1, bal, alt, con, kle, is_lit);
-        } else {
-            return nullptr;
+    char found_op = 0;
+    int found_pos = -1;
+    for (int o = 0; o < op_count; o++) {
+        char op = op_chars[o];
+        auto &v = ops[{bal[l], op}];
+        auto it = std::lower_bound(v.begin(), v.end(), r);
+        if (it != v.begin()) {
+            int p = *(--it);
+            if (p >= l) {
+                found_op = op;
+                found_pos = p;
+                break;
+            }
         }
     }
+
+    if (found_op == '|') {
+        auto l_ = parse(t, l, found_pos, bal, ops, is_lit);
+        auto r_ = parse(t, found_pos + 1, r, bal, ops, is_lit);
+        if (!l_) return r_;
+        if (!r_) return l_;
+        return std::make_unique<ast_node>(ast_node_t::ALTER, "#", std::move(l_), std::move(r_));
+    }
+    if (found_op == '_') {
+        auto l_ = parse(t, l, found_pos, bal, ops, is_lit);
+        auto r_ = parse(t, found_pos + 1, r, bal, ops, is_lit);
+        if (!l_) return r_;
+        if (!r_) return l_;
+        return std::make_unique<ast_node>(ast_node_t::CONCAT, "#", std::move(l_), std::move(r_));
+    }
+    if (found_op == '*') {
+        if (found_pos + 1 != r)
+            throw std::invalid_argument("regex: '*' must appear at end of subexpression");
+        auto l_ = parse(t, l, found_pos, bal, ops, is_lit);
+        if (!l_)
+            throw std::invalid_argument("regex: '*' applied to empty operand");
+        return std::make_unique<ast_node>(ast_node_t::KLEENE, "#", std::move(l_));
+    }
+    if (found_op == '^') {
+        if (found_pos != l)
+            throw std::invalid_argument("regex: '^' must appear at start of subexpression");
+        for (int i = l + 1; i < r; i++)
+            if (!is_lit[i])
+                throw std::invalid_argument("regex: '^' operand must consist of plain literals");
+        return std::make_unique<ast_node>(ast_node_t::EXCEPT, t.substr(l + 1, r - l - 1));
+    }
+    if (!is_lit[l] && t[l] == '(' && !is_lit[r - 1] && t[r - 1] == ')')
+        return parse(t, l + 1, r - 1, bal, ops, is_lit);
+    return nullptr;
 }
 
 static std::unique_ptr<ast_node>
 parse(const std::string &s)
 {
     if (s.empty())
-        return std::make_unique<ast_node>(ast_node_t::EMPTY, '#');
+        return std::make_unique<ast_node>(ast_node_t::EMPTY, "#");
 
     /*
      * Tokenize: collapse \x escapes into a single literal token, and classify
@@ -116,7 +136,7 @@ parse(const std::string &s)
             } else {
                 i += 1;
             }
-        } else if (c == '|' || c == '*' || c == '(' || c == ')' || c == '.') {
+        } else if (c == '|' || c == '*' || c == '(' || c == ')' || c == '.' || c == '^') {
             raw.push_back(c);
             raw_lit.push_back(0);
             i += 1;
@@ -127,23 +147,36 @@ parse(const std::string &s)
         }
     }
     if (raw.empty())
-        return std::make_unique<ast_node>(ast_node_t::EMPTY, '#');
+        return std::make_unique<ast_node>(ast_node_t::EMPTY, "#");
 
     /* Insert explicit concat markers between adjacent operand tokens. */
+    bool except_operand = false;
     auto starts_operand = [](char ch, bool lit) {
-        return lit || ch == '.' || ch == '(';
+        return lit || ch == '.' || ch == '^' || ch == '(';
     };
     auto ends_operand = [](char ch, bool lit) {
-        return lit || ch == '.' || ch == ')' || ch == '*';
+        return lit || ch == '.' || ch == '^' || ch == ')' || ch == '*';
     };
     std::string t;
     std::vector<char> is_lit;
     for (int i = 0; i < (int)raw.size(); i++) {
-        if (i > 0 && ends_operand(raw[i - 1], raw_lit[i - 1])
-                  && starts_operand(raw[i], raw_lit[i])) {
-            t.push_back('_');
-            is_lit.push_back(0);
+        if (i > 0) {
+            if (except_operand) {
+                if (!raw_lit[i]) {
+                    if (starts_operand(raw[i], raw_lit[i])) {
+                        t.push_back('_');
+                        is_lit.push_back(0);
+                    }
+                    except_operand = false;
+                }
+            } else if (ends_operand(raw[i - 1], raw_lit[i - 1]) &&
+                       starts_operand(raw[i], raw_lit[i])) {
+                t.push_back('_');
+                is_lit.push_back(0);
+            }
         }
+        if (raw[i] == '^' && !raw_lit[i])
+            except_operand = true;
         t.push_back(raw[i]);
         is_lit.push_back(raw_lit[i]);
     }
@@ -156,18 +189,25 @@ parse(const std::string &s)
             else if (t[i] == ')') bal[i + 1]--;
         }
     }
-    std::unordered_map<int, std::vector<int>> alt, con, kle;
+    if (bal.back() != 0)
+        throw std::invalid_argument("regex: unbalanced parentheses");
+
+    ops_map ops;
     for (int i = 0; i < (int)t.size(); i++) {
-        if (is_lit[i])
-            continue;
-        if (t[i] == '|')
-            alt[bal[i + 1]].push_back(i);
-        else if (t[i] == '_')
-            con[bal[i + 1]].push_back(i);
-        else if (t[i] == '*')
-            kle[bal[i + 1]].push_back(i);
+        if (is_lit[i]) continue;
+        int b = bal[i + 1];
+        for (char op : op_chars) {
+            if (t[i] == op) {
+                ops[{b, op}].push_back(i);
+                break;
+            }
+        }
     }
-    return parse(t, 0, t.size(), bal, alt, con, kle, is_lit);
+
+    auto result = parse(t, 0, (int)t.size(), bal, ops, is_lit);
+    if (!result)
+        throw std::invalid_argument("regex: invalid expression");
+    return result;
 }
 
 struct nfa_node {
@@ -189,7 +229,7 @@ nfa_from_ast(const ast_node *v, nfa *d)
     d->nodes.push_back(std::make_unique<nfa_node>());
     nfa_node *finish = d->nodes.back().get();
 
-    if (v == nullptr) {
+    if (v == nullptr || v->t == ast_node_t::EMPTY) {
         start->eps.push_back(finish);
     } else if (v->t == ast_node_t::CONCAT) {
         auto [ls, lf] = nfa_from_ast(v->l.get(), d);
@@ -211,12 +251,18 @@ nfa_from_ast(const ast_node *v, nfa *d)
         start->eps.push_back(finish);
         lf->eps.push_back(ls);
     } else if (v->t == ast_node_t::LETTER) {
-        start->edges[(unsigned char)v->c].push_back(finish);
+        assert(v->s.size() == 1);
+        start->edges[(unsigned char)v->s[0]].push_back(finish);
     } else if (v->t == ast_node_t::ANY) {
         for (int i = 0; i < 256; i++)
             start->edges[i].push_back(finish);
-    } else if (v->t == ast_node_t::EMPTY) {
-        start->eps.push_back(finish);
+    } else if (v->t == ast_node_t::EXCEPT) {
+        std::unordered_set<unsigned char> excset;
+        for (unsigned char c : v->s)
+            excset.insert(c);
+        for (int i = 0; i < 256; i++)
+            if (!excset.count((unsigned char)i))
+                start->edges[i].push_back(finish);
     }
     return {start, finish};
 }
