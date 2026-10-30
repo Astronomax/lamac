@@ -41,22 +41,22 @@ builder_fn table[nonterminal_max][ALT_CAP] = {
     },
     /* COMPARISON_EXPR */ {
         [](std::vector<node_ptr> &ch) -> node_ptr {
-            return std::make_unique<compare>(EQ,  std::move(ch[0]), std::move(ch[2]));
+            return std::make_unique<binexpr>(EQ,  std::move(ch[0]), std::move(ch[2]));
         },
         [](std::vector<node_ptr> &ch) -> node_ptr {
-            return std::make_unique<compare>(NEQ, std::move(ch[0]), std::move(ch[2]));
+            return std::make_unique<binexpr>(NEQ, std::move(ch[0]), std::move(ch[2]));
         },
         [](std::vector<node_ptr> &ch) -> node_ptr {
-            return std::make_unique<compare>(LEQ, std::move(ch[0]), std::move(ch[2]));
+            return std::make_unique<binexpr>(LEQ, std::move(ch[0]), std::move(ch[2]));
         },
         [](std::vector<node_ptr> &ch) -> node_ptr {
-            return std::make_unique<compare>(LE,  std::move(ch[0]), std::move(ch[2]));
+            return std::make_unique<binexpr>(LE,  std::move(ch[0]), std::move(ch[2]));
         },
         [](std::vector<node_ptr> &ch) -> node_ptr {
-            return std::make_unique<compare>(GEQ, std::move(ch[0]), std::move(ch[2]));
+            return std::make_unique<binexpr>(GEQ, std::move(ch[0]), std::move(ch[2]));
         },
         [](std::vector<node_ptr> &ch) -> node_ptr {
-            return std::make_unique<compare>(GE,  std::move(ch[0]), std::move(ch[2]));
+            return std::make_unique<binexpr>(GE,  std::move(ch[0]), std::move(ch[2]));
         },
         [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
     },
@@ -92,15 +92,15 @@ builder_fn table[nonterminal_max][ALT_CAP] = {
     },
     /* PRIMARY */ {
         [](std::vector<node_ptr> &ch) -> node_ptr {
-            return std::make_unique<number_literal>(
-                static_cast<token_node *>(ch[0].get())->tok);
+            const auto &text = static_cast<token_node *>(ch[0].get())->tok.text;
+            return std::make_unique<number_literal>(std::stoi(text));
         },
-        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
-        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
-        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
-        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
+        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); }, /* LIDENT*/
+        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); }, /* true */
+        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); }, /* false */
+        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); }, /* skip */
         [](std::vector<node_ptr> &ch) -> node_ptr {
-            return std::make_unique<paren_expr>(std::move(ch[1]));
+            return std::move(ch[1]);
         },
         [](std::vector<node_ptr> &ch) -> node_ptr {
             return std::make_unique<builtin_call>(

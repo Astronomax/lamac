@@ -59,7 +59,7 @@ lex(const std::string &src)
             block_comment = true;
             continue;
         }
-        tokens.push_back({best->type, src.substr(pos, best_len)});
+        tokens.push_back({best->type, src.substr(pos - best_len, best_len)});
     }
     return tokens;
 }
