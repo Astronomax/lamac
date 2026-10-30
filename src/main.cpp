@@ -54,17 +54,11 @@ static void dump(const node_ptr &node, int depth) {
         return;
     }
     if (auto p = dynamic_cast<number_literal *>(node.get())) {
-        std::cout << "number:" << p->num.text << "\n";
+        std::cout << "number:" << p->num << "\n";
         return;
     }
     if (auto p = dynamic_cast<binexpr *>(node.get())) {
         std::cout << "binexpr:" << term_name(p->op) << "\n";
-        dump(p->lhs, depth + 1);
-        dump(p->rhs, depth + 1);
-        return;
-    }
-    if (auto p = dynamic_cast<compare *>(node.get())) {
-        std::cout << "compare:" << term_name(p->op) << "\n";
         dump(p->lhs, depth + 1);
         dump(p->rhs, depth + 1);
         return;

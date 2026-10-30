@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "functional"
 #include "memory"
 #include "utility"
@@ -32,8 +34,8 @@ struct unary_neg : ast_node {
 };
 
 struct number_literal : ast_node {
-    token num;
-    number_literal(token t) : num(std::move(t)) {}
+    int32_t num;
+    number_literal(int32_t n) : num(n) {}
 };
 
 struct builtin_call : ast_node {
@@ -41,14 +43,6 @@ struct builtin_call : ast_node {
     node_ptr arg;
     builtin_call(token n, node_ptr a = nullptr)
         : name(std::move(n)), arg(std::move(a)) {}
-};
-
-struct compare : ast_node {
-    terminal op;
-    node_ptr lhs;
-    node_ptr rhs;
-    compare(terminal op, node_ptr l, node_ptr r)
-        : op(op), lhs(std::move(l)), rhs(std::move(r)) {}
 };
 
 struct seq_node : ast_node {
