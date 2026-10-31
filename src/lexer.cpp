@@ -43,9 +43,12 @@ lex(const std::string &src)
             continue;
         }
         if (block_comment) {
-            if (best->type == BLOCK_COMMENT_END)
+            if (best->type == BLOCK_COMMENT_END) {
                 block_comment = false;
-            pos += 1;
+                pos += best_len;
+            } else {
+                pos += 1;
+            }
             continue;
         }
         pos += best_len;
