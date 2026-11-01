@@ -18,7 +18,11 @@ enum class location_kind {
 
 struct location {
     location_kind kind;
-    uint32_t index;
+    std::variant<uint32_t, std::string> value;
+};
+
+struct global {
+    std::string name;
 };
 
 struct read {};
@@ -58,6 +62,7 @@ struct constant {
 };
 
 using instruction = std::variant<
+    global,
     read,
     write,
     drop,
@@ -74,7 +79,7 @@ struct program {
     uint32_t local_count = 0;
 };
 
-} /* namespace sm */
-
 sm::program
 compile(const ast_node &root);
+
+} /* namespace sm */

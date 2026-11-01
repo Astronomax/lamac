@@ -2,6 +2,20 @@
 #include "grammar.h"
 #include "lexer.h"
 #include "parser.h"
+#include "sm.h"
+#include "x86.h"
+
+#include <cassert>
+#include <cerrno>
+#include <cstring>
+#include <cstdlib>
+#include <sstream>
+#include <filesystem>
+#include <fstream>
+#include <spawn.h>
+#include <sys/wait.h>
+
+extern char **environ;
 
 #include "iostream"
 
@@ -97,16 +111,101 @@ static void dump(const node_ptr &node, int depth) {
     std::cout << "<unknown node>\n";
 }
 
-int main(int argc, char **argv) {
-    std::string src = (argc > 1) ? argv[1] : "1 + 2 * 3 == 4";
+static int
+link_program(const std::string &assembly, const std::string &output)
+{
+    const char *runtime_dir = std::getenv("LAMA_RUNTIME");
+    const auto runtime = (std::filesystem::path(
+        runtime_dir ? runtime_dir : "runtime") / "runtime.a").string();
+    const char *args[] = {
+        "gcc", "-g", "-m32", "-no-pie", "-o", output.c_str(),
+        assembly.c_str(),
+        runtime.c_str(),
+        nullptr
+    };
+    pid_t pid;
+    int error = posix_spawnp(&pid, "gcc", nullptr, nullptr,
+                             const_cast<char **>(args), environ);
+    if (error != 0) {
+        std::cerr << "gcc: " << std::strerror(error) << '\n';
+        return 1;
+    }
+    int status;
+    while (waitpid(pid, &status, 0) == -1) {
+        if (errno != EINTR) {
+            std::cerr << "waitpid: " << std::strerror(errno) << '\n';
+            return 1;
+        }
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+
+int main(int argc, char **argv) try {
+    const std::string command = argc > 1 ? argv[1] : "";
+    if (!((command == "tokens" || command == "ast") && argc == 3) &&
+        !(command == "compile" && (argc == 3 || argc == 4))) {
+        std::cerr << "usage:\n"
+                  << "  " << argv[0] << " tokens <source.lama>\n"
+                  << "  " << argv[0] << " ast <source.lama>\n"
+                  << "  " << argv[0] << " compile <source.lama> [output]\n";
+        return 1;
+    }
+    const auto input = std::filesystem::path(argv[2]);
+    std::ifstream source(input);
+    if (!source) {
+        std::cerr << "cannot open source: " << input << '\n';
+        return 1;
+    }
+    std::ostringstream contents;
+    contents << source.rdbuf();
+    if (source.bad()) {
+        std::cerr << "cannot read source: " << input << '\n';
+        return 1;
+    }
+    const auto src = contents.str();
     std::vector<token> tokens = lex(src);
-    print_tokens(tokens);
+    if (command == "tokens") {
+        print_tokens(tokens);
+        return 0;
+    }
 
     node_ptr ast = parse(tokens);
     if (!ast) {
-        std::cout << "parse: no derivation\n";
+        std::cerr << "parse: no derivation\n";
         return 1;
     }
-    dump(ast, 0);
-    return 0;
+    if (command == "ast") {
+        dump(ast, 0);
+        return 0;
+    }
+    assert(command == "compile");
+    auto output_path = input;
+    if (argc == 4)
+        output_path = argv[3];
+    else if (output_path.has_extension())
+        output_path.replace_extension();
+    else
+        output_path += ".out";
+    const auto output = std::filesystem::absolute(output_path).string();
+    const auto assembly = output + ".s";
+    for (const auto &path : {output, assembly}) {
+        if (std::filesystem::weakly_canonical(path) ==
+                std::filesystem::weakly_canonical(input) ||
+            (std::filesystem::exists(path) && std::filesystem::equivalent(path, input))) {
+            std::cerr << "output would overwrite source: " << path << '\n';
+            return 1;
+        }
+    }
+    const auto code = x86::compile(sm::compile(*ast));
+    std::ofstream file(assembly);
+    file << code;
+    file.close();
+    if (!file) {
+        std::cerr << "cannot write assembly: " << assembly << '\n';
+        return 1;
+    }
+    return link_program(assembly, output);
+} catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    return 1;
 }

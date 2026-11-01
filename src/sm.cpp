@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
-namespace {
+namespace sm {
 
 struct scope {
     std::unordered_map<std::string, sm::location> vars;
@@ -88,9 +88,14 @@ compiler::declare(const ast_node &node)
         auto &count = global ? program.global_count : program.local_count;
         auto kind = global ? sm::location_kind::global : sm::location_kind::local;
         auto &vars = environment.scopes.back().vars;
-        if (!vars.emplace(p->name.text, sm::location{kind, count}).second)
+        sm::location location{kind, count};
+        if (global)
+            location.value = p->name.text;
+        if (!vars.emplace(p->name.text, std::move(location)).second)
             throw std::runtime_error("duplicate variable: " + p->name.text);
         ++count;
+        if (global)
+            program.code.emplace_back(sm::global{p->name.text});
     } else if (auto p = dynamic_cast<const var_def_node *>(&node)) {
         /* ignore is_public for now */
         declare(*p->seq);
@@ -190,8 +195,6 @@ compiler::emit(const ast_node &node)
     throw std::runtime_error("unsupported AST node");
 }
 
-}
-
 sm::program
 compile(const ast_node &root)
 {
@@ -199,3 +202,5 @@ compile(const ast_node &root)
     ctx.emit_discard(root);
     return std::move(ctx.program);
 }
+
+} /* namespace sm */

@@ -17,6 +17,7 @@ endif()
 add_executable(lamac
     src/main.cpp
     src/sm.cpp
+    src/x86.cpp
     src/lexer.cpp
     src/ast.cpp
     src/parser.cpp
