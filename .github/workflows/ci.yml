@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake gcc-multilib libc6-dev-i386
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build compiler and tests
+        run: cmake --build build --parallel 2
+
+      - name: Build runtime
+        run: make -C runtime
+
+      - name: Test regular expressions
+        run: ./build/test_regexp
+
+      - name: Run regression tests
+        run: make -C regression

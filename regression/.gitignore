@@ -1,0 +1,10 @@
+# Generated assembly and test output.
+*.s
+*.log
+
+# Keep expected test output.
+!**/orig/*.log
+
+# Compiled test executables.
+test[0-9]*[0-9]
+generated[0-9]*[0-9]
