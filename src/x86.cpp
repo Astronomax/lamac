@@ -396,36 +396,34 @@ compile(const sm::program &p_sm)
             } else if (binary_insn.op == sm::binary_op::conjunction ||
                        binary_insn.op == sm::binary_op::disjunction) {
                 /*
-                 * Set the least significant bit to 1 for non-zero numbers so that
-                 * bitwise operations behave like logical ones.
+                 * Normalize operands to 0 or 1 to match the original regression
+                 * tests, which use logical results in arithmetic and comparisons.
+                 * The specification's zero/non-zero convention allows preserving
+                 * the upper bits here, but those tests require canonical results.
+                 * "any non-zero value is treated as truth and zero as falsity,
+                 * AND THE RESULT RESPECTS THIS CONVENTION".
+                 * MOV clears eax without changing the flags used by SETNE.
                  */
                 code_append_move(code, rhs, reg::eax);
-                code_append_instruction(code, "cmp", {immediate{0}, reg::eax});
+                code_append_instruction(code, "cmpl", {immediate{0}, reg::eax});
+                code_append_move(code, immediate{0}, reg::eax);
                 code_append_instruction(code, "setne", {reg::al});
-                code_append_move(code, reg::eax, rhs);
+                code_append_move(code, reg::eax, reg::edx);
                 /* Same for the lhs. */
                 code_append_move(code, lhs, reg::eax);
-                code_append_instruction(code, "cmp", {immediate{0}, reg::eax});
+                code_append_instruction(code, "cmpl", {immediate{0}, reg::eax});
+                code_append_move(code, immediate{0}, reg::eax);
                 code_append_instruction(code, "setne", {reg::al});
-                /*
-                 * One of the operands must be a register, so use eax without
-                 * moving back to lhs.
-                 */
                 switch (binary_insn.op) {
                     case (sm::binary_op::conjunction):
-                    code_append_instruction(code, "andl", {rhs, reg::eax});
+                    code_append_instruction(code, "andl", {reg::edx, reg::eax});
                     break;
                     case (sm::binary_op::disjunction):
-                    code_append_instruction(code, "orl", {rhs, reg::eax});
+                    code_append_instruction(code, "orl", {reg::edx, reg::eax});
                     break;
                     default:
                     abort();
                 }
-                /*
-                 * "any non-zero value is treated as truth and zero as falsity,
-                 * AND THE RESULT RESPECTS THIS CONVENTION". That is, we can safely
-                 * return the result as is, without converting it to 0 or 1.
-                 */
                 code_append_move(code, reg::eax, result);
             } else if (binary_insn.op == sm::binary_op::div) {
                 /*
