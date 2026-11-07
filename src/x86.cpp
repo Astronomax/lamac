@@ -6,6 +6,9 @@
 #include <cstddef>
 #include <initializer_list>
 #include <sstream>
+#include <optional>
+#include <stdexcept>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -121,26 +124,47 @@ struct compiler {
     size_t local_count = 0;
     size_t stack_slots = 0;
 
+    std::unordered_map<std::string, std::vector<operand>> label_stacks;
+
+    operand stack_location(size_t depth);
+    std::vector<operand> make_stack(size_t depth);
     operand allocate();
+    void materialize_stack(std::stringstream &code);
+    void retrieve_stack(const std::string &label);
 
     std::vector<reg> live_registers(size_t depth);
 };
 
 /*
- * Allocates a new position on the symbolic stack.
+ * Returns the canonical location for the given symbolic stack depth.
  * [ebx, ecx, esi, edi, hardware stack -> ...]
+ * Updates the required temporary slot count.
  */
 operand
-compiler::allocate() {
-    size_t depth = symbolic_stack.size();
-    operand result;
-    if (depth < allocatable_regs.size()) {
-        result = allocatable_regs[depth];
-    } else {
-        size_t index = depth - allocatable_regs.size();
-        result = stack_slot{local_count + index};
-        stack_slots = std::max(stack_slots, index + 1);
-    }
+compiler::stack_location(size_t depth)
+{
+    if (depth < allocatable_regs.size())
+        return allocatable_regs[depth];
+    size_t index = depth - allocatable_regs.size();
+    stack_slots = std::max(stack_slots, index + 1);
+    return stack_slot{local_count + index};
+}
+
+std::vector<operand>
+compiler::make_stack(size_t depth)
+{
+    std::vector<operand> stack;
+    stack.reserve(depth);
+    for (size_t i = 0; i < depth; ++i)
+        stack.push_back(stack_location(i));
+    return stack;
+}
+
+/* Allocates a new position on the symbolic stack and returns its location. */
+operand
+compiler::allocate()
+{
+    auto result = stack_location(symbolic_stack.size());
     symbolic_stack.push_back(result);
     return result;
 }
@@ -247,6 +271,124 @@ code_append_move(std::stringstream &code, const operand &src, const operand &dst
 }
 
 void
+compiler::materialize_stack(std::stringstream &code)
+{
+    for (size_t depth = 0; depth < symbolic_stack.size(); ++depth) {
+        auto destination = stack_location(depth);
+        auto &source = symbolic_stack[depth];
+        /*
+         * Allocated values already occupy their depth's canonical location.
+         * Only immediates need materializing.
+         */
+        if (std::holds_alternative<immediate>(source)) {
+            code_append_move(code, source, destination);
+        } else if (const auto *r = std::get_if<reg>(&source)) {
+            assert(std::holds_alternative<reg>(destination) &&
+                   *r == std::get<reg>(destination));
+        } else if (const auto *slot = std::get_if<stack_slot>(&source)) {
+            /*
+             * Load always duplicates variable value onto the stack. We can't do
+             * otherwise because the variable's value may change later. We need
+             * to copy its value onto the stack at this specific point in time.
+             */
+            assert(std::holds_alternative<stack_slot>(destination) &&
+                   slot->index == std::get<stack_slot>(destination).index);
+        } else {
+            /*
+             * We don't push globals onto the symbolic stack (see the 'load'
+             * code generator). Unreachable.
+             */
+            abort();
+        }
+        source = destination;
+    }
+}
+
+void
+compiler::retrieve_stack(const std::string &label)
+{
+    symbolic_stack = label_stacks.at(label);
+}
+
+/*
+ * At control-flow joins, incoming values must occupy the same canonical
+ * registers and stack slots regardless of the path taken. Code generation
+ * therefore materializes the symbolic stack on incoming paths and restores
+ * its canonical layout at each label. This layout is determined by stack
+ * depth, which must be known for every reachable label before emission,
+ * including labels first reached by a backward jump.
+ *
+ * This separate pass traverses the control-flow graph using dfs to determine
+ * the entry depth of each reachable instruction. It ensures that all incoming
+ * paths agree on that depth and that the stack contains enough operands to
+ * execute the instruction. Unreachable instructions have no entry depth.
+ */
+std::vector<std::optional<size_t>>
+calculate_entry_depths(const sm::program &program)
+{
+    std::unordered_map<std::string, size_t> labels;
+    for (size_t i = 0; i < program.code.size(); ++i)
+        if (auto p = std::get_if<sm::label>(&program.code[i]))
+            if (!labels.emplace(p->label, i).second)
+                throw std::runtime_error("duplicate label: " + p->label);
+    auto get_label_pc = [&](const std::string &label) {
+        auto it = labels.find(label);
+        if (it == labels.end())
+            throw std::runtime_error("undefined label: " + label);
+        return it->second;
+    };
+    std::vector<std::optional<size_t>> depths(program.code.size() + 1);
+    std::vector<size_t> pending;
+    auto visit = [&](size_t pc, size_t depth) {
+        if (depths[pc]) {
+            /* Ensure that all paths enter at the same depth. */
+            if (*depths[pc] != depth)
+                throw std::runtime_error("inconsistent stack depth at instruction "
+                                         + std::to_string(pc));
+        } else {
+            depths[pc] = depth;
+            pending.push_back(pc);
+        }
+    };
+    visit(0, 0);
+    while (!pending.empty()) {
+        auto pc = pending.back();
+        pending.pop_back();
+        if (pc == program.code.size())
+            continue;
+        auto depth = *depths[pc];
+        const auto &insn = program.code[pc];
+        size_t required = 0;
+        if (std::holds_alternative<sm::binary>(insn))
+            required = 2;
+        else if (std::holds_alternative<sm::drop>(insn) ||
+                 std::holds_alternative<sm::cjmp>(insn) ||
+                 std::holds_alternative<sm::store>(insn) ||
+                 std::holds_alternative<sm::write>(insn))
+            required = 1;
+        if (depth < required)
+            throw std::runtime_error("symbolic stack underflow at instruction "
+                                     + std::to_string(pc));
+        if (std::holds_alternative<sm::constant>(insn) ||
+            std::holds_alternative<sm::load>(insn) ||
+            std::holds_alternative<sm::read>(insn))
+            ++depth;
+        else if (std::holds_alternative<sm::binary>(insn) ||
+                 std::holds_alternative<sm::drop>(insn) ||
+                 std::holds_alternative<sm::cjmp>(insn))
+            --depth;
+        if (auto p = std::get_if<sm::jmp>(&insn)) {
+            visit(get_label_pc(p->label), depth);
+        } else {
+            if (auto p = std::get_if<sm::cjmp>(&insn))
+                visit(get_label_pc(p->label), depth);
+            visit(pc + 1, depth);
+        }
+    }
+    return depths;
+}
+
+void
 code_append_function_call(std::stringstream &code, compiler &ctx,
                           std::string label, int n_args)
 {
@@ -290,6 +432,16 @@ compile(const sm::program &p_sm)
     compiler ctx;
     ctx.local_count = p_sm.local_count;
     std::stringstream code;
+    auto depths = calculate_entry_depths(p_sm);
+    for (size_t i = 0; i < p_sm.code.size(); ++i) {
+        if (!depths[i])
+            /* Unreachable code. */
+            continue;
+        if (auto p = std::get_if<sm::label>(&p_sm.code[i])) {
+            ctx.label_stacks.emplace(p->label, ctx.make_stack(*depths[i]));
+        }
+    }
+    bool falls_through = true;
 
     code << "\t.global\tmain\n";
     /* The runtime scans this section for global GC roots. */
@@ -305,7 +457,11 @@ compile(const sm::program &p_sm)
     code_append_move(code, reg::esp, reg::ebp);
     code_append_instruction(code, "subl", {"$main_SIZE", reg::esp});
 
-    for (const auto &insn : p_sm.code) {
+    for (size_t pc = 0; pc < p_sm.code.size(); ++pc) {
+        if (!depths[pc])
+            /* Unreachable code. */
+            continue;
+        const auto &insn = p_sm.code[pc];
         if (std::holds_alternative<sm::global>(insn)) {
             continue;
         } else if (std::holds_alternative<sm::read>(insn)) {
@@ -476,6 +632,39 @@ compile(const sm::program &p_sm)
         } else if (std::holds_alternative<sm::constant>(insn)) {
             const auto &constant_insn = std::get<sm::constant>(insn);
             ctx.symbolic_stack.emplace_back(immediate{constant_insn.value});
+        } else if (std::holds_alternative<sm::label>(insn)) {
+            const auto &label = std::get<sm::label>(insn).label;
+            if (falls_through) {
+                ctx.materialize_stack(code);
+                assert(ctx.symbolic_stack.size() == ctx.label_stacks.at(label).size());
+            } else {
+                ctx.retrieve_stack(label);
+            }
+            code << label << ":\n";
+            falls_through = true;
+        } else if (std::holds_alternative<sm::jmp>(insn)) {
+            const auto &label = std::get<sm::jmp>(insn).label;
+            ctx.materialize_stack(code);
+            code_append_instruction(code, "jmp", {label});
+            falls_through = false;
+        } else if (std::holds_alternative<sm::cjmp>(insn)) {
+            const auto &jump = std::get<sm::cjmp>(insn);
+            const auto condition = ctx.symbolic_stack.back();
+            ctx.symbolic_stack.pop_back();
+            /* Preserve the condition while materializing the remaining values. */
+            code_append_move(code, condition, reg::edx);
+            ctx.materialize_stack(code);
+            code_append_instruction(code, "cmpl", {immediate{0}, reg::edx});
+            switch (jump.condition) {
+                case sm::jump_condition::zero:
+                code_append_instruction(code, "je", {jump.label});
+                break;
+                case sm::jump_condition::not_zero:
+                code_append_instruction(code, "jne", {jump.label});
+                break;
+                default:
+                throw std::runtime_error("unsupported jump condition");
+            }
         } else {
             abort();
         }

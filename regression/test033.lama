@@ -1,0 +1,7 @@
+-- Nested conditionals in conditions, initializers and assignments.
+var x = if read() then 1 else 2 fi;
+x := if x == 1 then 3 else 4 fi;
+write(x);
+write(if (if read() then 0 else 2 fi) then 10 else 20 fi);
+write(if read() then (if read() then 1 else 2 fi) else 3 fi);
+write(if read() then (if read() then 1 else 2 fi) else 3 fi)

@@ -1,0 +1,9 @@
+-- Discarded branch values and conditionals without else.
+if 1 then 42 else write(90) fi;
+if 0 then 42 else write(10) fi;
+if 1 then write(20) else 42 fi;
+if 0 then write(90) else 42 fi;
+if 0 then write(90) fi;
+if 1 then write(30) fi;
+if 1 then 42 fi;
+write(40)

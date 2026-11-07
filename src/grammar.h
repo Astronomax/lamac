@@ -22,16 +22,33 @@ enum nonterminal {
     VAR_DEF,
     DEFINITION,
     DEFINITION_LIST,
+    IF_EXPRESSION,
+    ELSE_PART,
+    WHILE_DO_EXPRESSION,
+    DO_WHILE_EXPRESSION,
+    FOR_EXPRESSION,
     nonterminal_max
 };
 
 enum terminal {
-    VAR,
     READ,
     WRITE,
-    SKIP,
-    TRUE,
+    /* keywords */
+    DO,
+    ELIF,
+    ELSE,
     FALSE,
+    FI,
+    FOR,
+    IF,
+    OD,
+    OF,
+    SKIP,
+    THEN,
+    TRUE,
+    VAR,
+    WHILE,
+    /* keywords */    
     LIDENT,
     UIDENT,
     DECIMAL,
@@ -61,8 +78,8 @@ enum terminal {
 
 typedef std::variant<terminal, nonterminal> symbol;
 
-inline constexpr size_t RULE_CAP = 4;
-inline constexpr size_t ALT_CAP  = 8;
+inline constexpr size_t RULE_CAP = 9;
+inline constexpr size_t ALT_CAP  = 12;
 
 struct rule {
     size_t len;
@@ -131,6 +148,10 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
         rule{1, { FALSE }},
         rule{1, { SKIP }},
         rule{3, { LBRACE, SCOPE_EXPR, RBRACE }},
+        rule{1, { IF_EXPRESSION }},
+        rule{1, { WHILE_DO_EXPRESSION }},
+        rule{1, { DO_WHILE_EXPRESSION }},
+        rule{1, { FOR_EXPRESSION }},
         rule{3, { READ,   LBRACE,     RBRACE }},
         rule{4, { WRITE,  LBRACE,     EXPRESSION, RBRACE }},
     }},
@@ -151,5 +172,27 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
     /* DEFINITION_LIST : definition | definition* definition */ {{
         rule{1, { DEFINITION }},
         rule{2, { DEFINITION_LIST, DEFINITION }},
+    }},
+    /* IF_EXPRESSION :  'if' expression 'then' scopeExpression 'fi' |
+                        'if' expression 'then' scopeExpression elsePart 'fi' */ {{
+        rule{5, { IF, EXPRESSION, THEN, SCOPE_EXPR, FI }},
+        rule{6, { IF, EXPRESSION, THEN, SCOPE_EXPR, ELSE_PART, FI }},
+    }},
+    /* ELSE_PART :  'elif' expression 'then' scopeExpression |
+                    'elif' expression 'then' scopeExpression elsePart |
+                    'else' scopeExpression */ {{
+        rule{4, { ELIF, EXPRESSION, THEN, SCOPE_EXPR }},
+        rule{5, { ELIF, EXPRESSION, THEN, SCOPE_EXPR, ELSE_PART }},
+        rule{2, { ELSE, SCOPE_EXPR }},
+    }},
+    /* WHILE_DO_EXPRESSION : 'while' expression 'do' scopeExpression 'od' */ {{
+        rule{5, { WHILE, EXPRESSION, DO, SCOPE_EXPR, OD }},
+    }},
+    /* DO_WHILE_EXPRESSION : 'do' scopeExpression 'while' expression 'od' */ {{
+        rule{5, { DO, SCOPE_EXPR, WHILE, EXPRESSION, OD }},
+    }},
+    /* FOR_EXPRESSION : 'for' scopeExpression ',' expression ',' expression
+                        'do' scopeExpresssion 'od' */ {{
+        rule{9, { FOR, SCOPE_EXPR, COMMA, EXPRESSION, COMMA, EXPRESSION, DO, SCOPE_EXPR, OD }},
     }},
 }};

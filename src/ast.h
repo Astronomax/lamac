@@ -68,6 +68,28 @@ struct scope_expr_node : ast_node {
     scope_expr_node(node_ptr d, node_ptr e) : defs(std::move(d)), expr(std::move(e)) {}
 };
 
+struct if_expr_node : ast_node {
+    node_ptr condition; /* expression */
+    node_ptr then_branch; /* scope_expr_node */
+    node_ptr else_branch; /* nullptr | if_expr_node | scope_expr_node */
+    if_expr_node(node_ptr c, node_ptr t, node_ptr e) :
+        condition(std::move(c)), then_branch(std::move(t)), else_branch(std::move(e)) {}
+};
+
+struct while_do_expr_node : ast_node {
+    node_ptr condition; /* expression */
+    node_ptr body; /* scope_expr_node */
+    while_do_expr_node(node_ptr c, node_ptr b) :
+        condition(std::move(c)), body(std::move(b)) {}
+};
+
+struct do_while_expr_node : ast_node {
+    node_ptr condition; /* expression */
+    node_ptr body; /* scope_expr_node */
+    do_while_expr_node(node_ptr c, node_ptr b) :
+        condition(std::move(c)), body(std::move(b)) {}
+};
+
 using builder_fn = std::function<node_ptr(std::vector<node_ptr> &children)>;
 
 extern builder_fn table[nonterminal_max][ALT_CAP];

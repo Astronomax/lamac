@@ -1,0 +1,11 @@
+-- Preserve spilled values across loop back edges and nested joins.
+write(1 + (2 + (3 + (4 + (5 +
+    (var x = 0;
+     while (if x < 3 then 2 else 0 fi) do
+         if x == 1 then x := x + 2 else x := x + 1 fi
+     od;
+     x))))));
+write(1 + (2 + (3 + (4 + (5 +
+    (var x = 0;
+     do x := x + 1 while (if x < 3 then 2 else 0 fi) od;
+     x))))))

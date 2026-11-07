@@ -1,0 +1,6 @@
+-- Keep live values across joins, beyond the available registers.
+var x = 9;
+write(1 + (2 + (3 + (4 + (5 + (if read() then 10 else x fi))))));
+write(1 + (2 + (3 + (4 + (5 + (if read() then 10 else x fi))))));
+write(read() + (read() + (read() + (read() + (read() +
+    (if read() then 10 else x fi))))))

@@ -1,0 +1,17 @@
+-- Nested loops, branch-local variables and shadowing.
+var i = 0, total = 0, x = 100;
+while i < 3 do
+    var j = 0;
+    do
+        if (i + j) % 2 == 0 then
+            var x = i * 10 + j;
+            total := total + x
+        else
+            total := total + 1
+        fi;
+        j := j + 1
+    while j < 2 od;
+    i := i + 1
+od;
+write(total);
+write(x)

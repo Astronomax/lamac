@@ -15,12 +15,24 @@ struct token_spec {
 };
 
 inline constexpr token_spec token_specs[] = {
-    {VAR,         "var"},
     {READ,        "read"},
     {WRITE,       "write"},
-    {SKIP,        "skip"},
-    {TRUE,        "true"},
+    /* keywords */
+    {DO,          "do"},
+    {ELIF,        "elif"},
+    {ELSE,        "else"},
     {FALSE,       "false"},
+    {FI,          "fi"},
+    {FOR,         "for"},
+    {IF,          "if"},
+    {OD,          "od"},
+    {OF,          "of"},
+    {SKIP,        "skip"},
+    {THEN,        "then"},
+    {TRUE,        "true"},
+    {VAR,         "var"},
+    {WHILE,       "while"},
+    /* keywords */
     {LIDENT,      "(a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z)"
                   "((a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z)|"
                   "(A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z)|"

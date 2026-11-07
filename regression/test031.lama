@@ -1,0 +1,7 @@
+-- Both branches and nonzero conditions, including negative values.
+write(if read() then 10 else 20 fi);
+write(if read() then 10 else 20 fi);
+write(if read() then 10 else 20 fi);
+write(if read() then 10 elif read() then 20 else 30 fi);
+write(if read() then 10 elif read() then 20 else 30 fi);
+write(if read() then 10 elif read() then 20 else 30 fi)

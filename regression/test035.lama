@@ -1,0 +1,7 @@
+-- Do-while executes at least once and reevaluates its condition.
+var x = 0, checks = 0;
+do x := x + 1 while 0 od;
+write(x);
+do x := x + 1 while (checks := checks + 1; x < 4) od;
+write(x);
+write(checks)

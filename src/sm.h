@@ -61,15 +61,37 @@ struct constant {
     int32_t value;
 };
 
+struct label {
+    std::string label;
+};
+
+struct jmp {
+    std::string label;
+};
+
+enum jump_condition {
+    zero,
+    not_zero,
+};
+
+/* Pops the condition on both the taken and fall-through paths. */
+struct cjmp {
+    jump_condition condition;
+    std::string label;
+};
+
 using instruction = std::variant<
     global,
     read,
     write,
     drop,
-    binary, /* (s) */
-    load,   /* (x) */
-    store,  /* (x) */
-    constant/* (n) */
+    binary,     /* (s) */
+    load,       /* (x) */
+    store,      /* (x) */
+    constant,   /* (n) */
+    label,
+    jmp,
+    cjmp
 >;
 
 struct program {

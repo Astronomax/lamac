@@ -1,0 +1,7 @@
+-- While executes zero or many times; its condition has side effects.
+var x = 0, checks = 0;
+while 0 do x := 99 od;
+write(x);
+while (checks := checks + 1; x < 4) do x := x + 1 od;
+write(x);
+write(checks)

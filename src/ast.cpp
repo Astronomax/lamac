@@ -100,6 +100,10 @@ builder_fn table[nonterminal_max][ALT_CAP] = {
         [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
         [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
         [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[1]); },
+        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
+        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
+        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
+        [](std::vector<node_ptr> &ch) -> node_ptr { return std::move(ch[0]); },
         [](std::vector<node_ptr> &ch) -> node_ptr {
             return std::make_unique<builtin_call>(
                 static_cast<token_node *>(ch[0].get())->tok);
@@ -149,6 +153,47 @@ builder_fn table[nonterminal_max][ALT_CAP] = {
             auto *seq = static_cast<seq_node *>(ch[0].get());
             seq->items.push_back(std::move(ch[1]));
             return std::move(ch[0]);
+        },
+    },
+    /* IF_EXPRESSION */ {
+        [](std::vector<node_ptr> &ch) -> node_ptr {
+            return std::make_unique<if_expr_node>(std::move(ch[1]), std::move(ch[3]), nullptr);
+        },
+        [](std::vector<node_ptr> &ch) -> node_ptr {
+            return std::make_unique<if_expr_node>(std::move(ch[1]), std::move(ch[3]), std::move(ch[4]));
+        },
+    },
+    /* ELSE_PART */ {
+        [](std::vector<node_ptr> &ch) -> node_ptr {
+            return std::make_unique<if_expr_node>(std::move(ch[1]), std::move(ch[3]), nullptr);
+        },
+        [](std::vector<node_ptr> &ch) -> node_ptr {
+            return std::make_unique<if_expr_node>(std::move(ch[1]), std::move(ch[3]), std::move(ch[4]));
+        },
+        [](std::vector<node_ptr> &ch) -> node_ptr {
+            return std::move(ch[1]); /* scope_expr_node */
+        },
+    },
+    /* WHILE_DO_EXPRESSION */ {
+        [](std::vector<node_ptr> &ch) -> node_ptr {
+            return std::make_unique<while_do_expr_node>(std::move(ch[1]), std::move(ch[3]));
+        },
+    },
+    /* DO_WHILE_EXPRESSION */ {
+        [](std::vector<node_ptr> &ch) -> node_ptr {
+            return std::make_unique<do_while_expr_node>(std::move(ch[3]), std::move(ch[1]));
+        },
+    },
+    /* FOR_EXPRESSION */ {
+        [](std::vector<node_ptr> &ch) -> node_ptr {
+            auto body = std::make_unique<seq_node>();
+            body->items.push_back(std::move(ch[7]));
+            body->items.push_back(std::move(ch[5]));
+            auto loop = std::make_unique<while_do_expr_node>(std::move(ch[3]), std::move(body));
+            auto seq = std::make_unique<seq_node>();
+            seq->items.push_back(std::move(ch[1]));
+            seq->items.push_back(std::move(loop));
+            return std::move(seq);
         },
     },
 };
