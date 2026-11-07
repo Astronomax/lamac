@@ -240,6 +240,7 @@ code_append_move(std::stringstream &code, const operand &src, const operand &dst
             /* Move through eax register */
             code_append_instruction(code, "movl", {src, reg::eax});
             code_append_instruction(code, "movl", {reg::eax, dst});
+            return;
     }
     /* Move directly */
     code_append_instruction(code, "movl", {src, dst});
