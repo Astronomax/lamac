@@ -435,7 +435,13 @@ compile(const sm::program &p_sm)
                 code_append_move(code, lhs, reg::eax);
                 /* idivl divides EDX:EAX, so let's extend 32-bit eax to 64-bit edx:eax. */
                 code_append_instruction(code, "cltd", {});
-                code_append_instruction(code, "idivl", {rhs});
+                auto divisor = rhs;
+                if (std::holds_alternative<immediate>(divisor)) {
+                    /* IDIV accepts only a register or memory operand. */
+                    code_append_move(code, divisor, result);
+                    divisor = result;
+                }
+                code_append_instruction(code, "idivl", {divisor});
                 code_append_move(code, reg::eax, result);
             } else if (binary_insn.op == sm::binary_op::mod) {
                 /*
@@ -447,7 +453,13 @@ compile(const sm::program &p_sm)
                  */
                 code_append_move(code, lhs, reg::eax);
                 code_append_instruction(code, "cltd", {});
-                code_append_instruction(code, "idivl", {rhs});
+                auto divisor = rhs;
+                if (std::holds_alternative<immediate>(divisor)) {
+                    /* Reuse the result location to hold an immediate divisor. */
+                    code_append_move(code, divisor, result);
+                    divisor = result;
+                }
+                code_append_instruction(code, "idivl", {divisor});
                 code_append_move(code, reg::edx, result);
             } else {
                 abort();
