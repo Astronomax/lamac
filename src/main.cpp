@@ -31,6 +31,7 @@ static const char *term_name(enum terminal t) {
         case UIDENT:     return "uident";
         case DECIMAL:    return "decimal";
         case ASSIGN:     return ":=";
+        case INIT:       return "=";
         case DISJUNCTION:return "!!";
         case CONJUNCTION:return "&&";
         case EQ:         return "==";

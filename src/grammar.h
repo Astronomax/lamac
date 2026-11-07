@@ -36,6 +36,7 @@ enum terminal {
     UIDENT,
     DECIMAL,
     ASSIGN,
+    INIT,
     DISJUNCTION,
     CONJUNCTION,
     EQ,
@@ -133,9 +134,9 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
         rule{3, { READ,   LBRACE,     RBRACE }},
         rule{4, { WRITE,  LBRACE,     EXPRESSION, RBRACE }},
     }},
-    /* VAR_DEF_ITEM : LIDENT | LIDENT ':=' basicExpression */ {{
+    /* VAR_DEF_ITEM : LIDENT | LIDENT '=' basicExpression */ {{
         rule{1, { LIDENT }},
-        rule{3, { LIDENT, ASSIGN, BASIC_EXPRESSION }},
+        rule{3, { LIDENT, INIT, BASIC_EXPRESSION }},
     }},
     /* VAR_DEF_SEQ : variableDefinitionItem | variableDefinitionSequence ',' variableDefinitionItem */ {{
         rule{1, { VAR_DEF_ITEM }},
