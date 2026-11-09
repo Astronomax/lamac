@@ -67,21 +67,21 @@ struct mdarray {
     }
 };
 
-node_ptr
+build_result
 reconstruct(int i, int j, nonterminal nt1, size_t alt1,
             const std::vector<token> &tokens,
             const mdarray<int, 5> &dp, const mdarray<int, 3> &dp_agg)
 {
     const rule &r = grammar[nt1][alt1];
     size_t len = r.len;
-    std::vector<node_ptr> children(len);
+    std::vector<build_result> children(len);
     for (int m = len - 1; m >= 0; m--) {
         int k = dp(i, j, nt1, alt1, m);
         int pos = len - 1 - m;
         symbol sym = r.rhs[pos];
         if (std::holds_alternative<terminal>(sym)) {
             assert(i + 1 == k);
-            children[pos] = std::make_unique<token_node>(tokens[i]);
+            children[pos] = tokens[i];
         } else {
             nonterminal nt2 = std::get<nonterminal>(sym);
             int alt2 = dp_agg(i, k, nt2);
@@ -170,5 +170,5 @@ parse(const std::vector<token> &tokens)
     int alt = dp_agg(0, n, SCOPE_EXPR);
     if (alt == -1)
         return nullptr;
-    return reconstruct(0, n, SCOPE_EXPR, alt, tokens, dp, dp_agg);
+    return std::get<node_ptr>(reconstruct(0, n, SCOPE_EXPR, alt, tokens, dp, dp_agg));
 }

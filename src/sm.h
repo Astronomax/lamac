@@ -80,6 +80,19 @@ struct cjmp {
     std::string label;
 };
 
+struct begin {
+    std::string label;
+    size_t n_args;
+    size_t n_locals;
+};
+
+struct end {};
+
+struct call {
+    std::string label;
+    size_t n_args;
+};
+
 using instruction = std::variant<
     global,
     read,
@@ -91,14 +104,15 @@ using instruction = std::variant<
     constant,   /* (n) */
     label,
     jmp,
-    cjmp
+    cjmp,
+    begin,
+    end,
+    call
 >;
 
 struct program {
     std::vector<instruction> code;
     uint32_t global_count = 0;
-    // TODO: Reuse slots on scope exit, track peak locals per function.
-    uint32_t local_count = 0;
 };
 
 sm::program

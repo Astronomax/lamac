@@ -64,6 +64,10 @@ struct stack_slot {
     size_t index;
 };
 
+struct argument_slot {
+    size_t index;
+};
+
 struct global_memory {
     std::string name;
 };
@@ -75,6 +79,7 @@ struct immediate {
 using operand = std::variant<
     reg,
     stack_slot,
+    argument_slot,
     global_memory,
     immediate
     /* Indirect operands are not yet being used */
@@ -124,13 +129,12 @@ struct compiler {
     size_t local_count = 0;
     size_t stack_slots = 0;
 
-    std::unordered_map<std::string, std::vector<operand>> label_stacks;
+    std::string current_function_label;
 
     operand stack_location(size_t depth);
     std::vector<operand> make_stack(size_t depth);
     operand allocate();
     void materialize_stack(std::stringstream &code);
-    void retrieve_stack(const std::string &label);
 
     std::vector<reg> live_registers(size_t depth);
 };
@@ -193,7 +197,7 @@ sm_location_to_operand(const sm::location &location)
         case (sm::location_kind::local):
         return stack_slot{std::get<uint32_t>(location.value)};
         case (sm::location_kind::argument):
-        throw std::runtime_error("unimplemented"); 
+        return argument_slot{std::get<uint32_t>(location.value)};
         case (sm::location_kind::captured):
         throw std::runtime_error("unimplemented");
         default:
@@ -210,6 +214,9 @@ operand_to_string(const operand &operand)
         auto index = stack_slot_op->index;
         auto offset = (index + 1) * WORD_SIZE;
         return "-" + std::to_string(offset) + "(%ebp)";
+    } else if (const auto *arg = std::get_if<argument_slot>(&operand)) {
+        /* Skip the saved ebp and return address. */
+        return std::to_string((arg->index + 2) * WORD_SIZE) + "(%ebp)";
     } else if (const auto *global_op = std::get_if<global_memory>(&operand)) {
         return global_op->name;
     } else if (const auto *immediate_op = std::get_if<immediate>(&operand)) {
@@ -253,7 +260,8 @@ bool
 operand_resides_in_memory(const operand &operand)
 {
   return std::holds_alternative<global_memory>(operand) ||
-         std::holds_alternative<stack_slot>(operand);
+         std::holds_alternative<stack_slot>(operand) ||
+         std::holds_alternative<argument_slot>(operand);
 }
 
 void
@@ -304,12 +312,6 @@ compiler::materialize_stack(std::stringstream &code)
     }
 }
 
-void
-compiler::retrieve_stack(const std::string &label)
-{
-    symbolic_stack = label_stacks.at(label);
-}
-
 /*
  * At control-flow joins, incoming values must occupy the same canonical
  * registers and stack slots regardless of the path taken. Code generation
@@ -350,7 +352,13 @@ calculate_entry_depths(const sm::program &program)
             pending.push_back(pc);
         }
     };
-    visit(0, 0);
+    /*
+     * Each function starts with an empty computation stack. Arguments are
+     * accessed through their frame locations, not through this stack.
+     */
+    for (const auto &insn : program.code)
+        if (const auto *begin = std::get_if<sm::begin>(&insn))
+            visit(get_label_pc(begin->label), 0);
     while (!pending.empty()) {
         auto pc = pending.back();
         pending.pop_back();
@@ -366,6 +374,8 @@ calculate_entry_depths(const sm::program &program)
                  std::holds_alternative<sm::store>(insn) ||
                  std::holds_alternative<sm::write>(insn))
             required = 1;
+        if (const auto *call = std::get_if<sm::call>(&insn))
+            required = call->n_args;
         if (depth < required)
             throw std::runtime_error("symbolic stack underflow at instruction "
                                      + std::to_string(pc));
@@ -377,6 +387,10 @@ calculate_entry_depths(const sm::program &program)
                  std::holds_alternative<sm::drop>(insn) ||
                  std::holds_alternative<sm::cjmp>(insn))
             --depth;
+        if (const auto *call = std::get_if<sm::call>(&insn))
+            depth = depth - call->n_args + 1;
+        if (std::holds_alternative<sm::end>(insn))
+            continue;
         if (auto p = std::get_if<sm::jmp>(&insn)) {
             visit(get_label_pc(p->label), depth);
         } else {
@@ -410,14 +424,21 @@ code_append_function_call(std::stringstream &code, compiler &ctx,
     assert(ctx.symbolic_stack.size() >= n_args);
     auto begin = ctx.symbolic_stack.end() - n_args;
     auto end = ctx.symbolic_stack.end();
-    for (auto arg = begin; arg != end; arg++)
+    /* Evaluate left to right, but push right to left so Arg(0) is at 8(%ebp). */
+    for (auto arg = end; arg != begin;) {
+        --arg;
         code_append_instruction(code, "pushl", {*arg});
+    }
     /*
      * Drop them from the symbolic stack since they were only needed to prepare
      * the arguments on the hardware stack.
      */
     ctx.symbolic_stack.erase(begin, end);
-    /* Call function. */
+    /*
+     * CALL pushes the address of the next instruction onto the hardware stack
+     * and transfers control to the function. RET pops this return address and
+     * resumes execution here, with the function's result in eax by convention.
+     */
     code_append_instruction(code, "call", {label});
     /* Drop the arguments (adjust hardware stack pointer back). */
     code_append_instruction(code, "addl", {immediate{WORD_SIZE * n_args}, reg::esp});
@@ -430,17 +451,8 @@ std::string
 compile(const sm::program &p_sm)
 {
     compiler ctx;
-    ctx.local_count = p_sm.local_count;
     std::stringstream code;
     auto depths = calculate_entry_depths(p_sm);
-    for (size_t i = 0; i < p_sm.code.size(); ++i) {
-        if (!depths[i])
-            /* Unreachable code. */
-            continue;
-        if (auto p = std::get_if<sm::label>(&p_sm.code[i])) {
-            ctx.label_stacks.emplace(p->label, ctx.make_stack(*depths[i]));
-        }
-    }
     bool falls_through = true;
 
     code << "\t.global\tmain\n";
@@ -452,10 +464,6 @@ compile(const sm::program &p_sm)
         if (const auto *global = std::get_if<sm::global>(&insn))
             code << "global_" << global->name << ":\t.int\t0\n";
     code << "\t.text\n";
-    code << "main:\n";
-    code_append_instruction(code, "pushl", {reg::ebp});
-    code_append_move(code, reg::esp, reg::ebp);
-    code_append_instruction(code, "subl", {"$main_SIZE", reg::esp});
 
     for (size_t pc = 0; pc < p_sm.code.size(); ++pc) {
         if (!depths[pc])
@@ -636,9 +644,9 @@ compile(const sm::program &p_sm)
             const auto &label = std::get<sm::label>(insn).label;
             if (falls_through) {
                 ctx.materialize_stack(code);
-                assert(ctx.symbolic_stack.size() == ctx.label_stacks.at(label).size());
+                assert(ctx.symbolic_stack.size() == *depths[pc]);
             } else {
-                ctx.retrieve_stack(label);
+                ctx.symbolic_stack = ctx.make_stack(*depths[pc]);
             }
             code << label << ":\n";
             falls_through = true;
@@ -665,16 +673,42 @@ compile(const sm::program &p_sm)
                 default:
                 throw std::runtime_error("unsupported jump condition");
             }
+        } else if (std::holds_alternative<sm::begin>(insn)) {
+            const auto &begin = std::get<sm::begin>(insn);
+            ctx.current_function_label = begin.label;
+            ctx.local_count = begin.n_locals;
+            ctx.stack_slots = 0;
+            assert(ctx.symbolic_stack.empty());
+            code_append_instruction(code, "pushl", {reg::ebp});
+            code_append_move(code, reg::esp, reg::ebp);
+            code_append_instruction(code, "subl", {"$" + begin.label + "_SIZE", reg::esp});
+        } else if (std::holds_alternative<sm::end>(insn)) {
+            /* Epilogue. */
+            operand ret;
+            if (ctx.current_function_label == "main") {
+                /* Return 0. */
+                ret = immediate{0};
+            } else {
+                ret = ctx.symbolic_stack.back();
+                ctx.symbolic_stack.pop_back();
+            }
+            /* Read the result while this function's frame is still active. */
+            code_append_move(code, ret, reg::eax);
+            code_append_move(code, reg::ebp, reg::esp);
+            code_append_instruction(code, "popl", {reg::ebp});
+            code_append_instruction(code, "ret");
+            code << "\t.set\t" + ctx.current_function_label + "_SIZE,\t"
+                 << (ctx.local_count + ctx.stack_slots) * WORD_SIZE << '\n';
+            /* Control jumps somewhere else, not to the next instruction. */
+            falls_through = false;
+        } else if (std::holds_alternative<sm::call>(insn)) {
+            const auto &call = std::get<sm::call>(insn);
+            code_append_function_call(code, ctx, call.label, call.n_args);
+            code_append_move(code, reg::eax, ctx.allocate());
         } else {
             abort();
         }
     }
-    code_append_move(code, reg::ebp, reg::esp);
-    code_append_instruction(code, "popl", {reg::ebp});
-    code_append_move(code, immediate{0}, reg::eax);
-    code_append_instruction(code, "ret");
-    code << "\t.set\tmain_SIZE,\t"
-         << (ctx.local_count + ctx.stack_slots) * WORD_SIZE << '\n';
     return code.str();
 }
 

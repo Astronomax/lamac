@@ -1,34 +1,86 @@
 #include "sm.h"
 
+#include <cassert>
+#include <optional>
+#include <queue>
 #include <stdexcept>
 #include <unordered_map>
 
 namespace sm {
 
+struct function_binding {
+    std::string label;
+    size_t argument_count;
+};
+
+using name_binding = std::variant<
+    sm::location,
+    function_binding
+>;
+
 struct scope {
-    std::unordered_map<std::string, sm::location> vars;
+    std::unordered_map<std::string, name_binding> names;
 };
 
 struct env {
     std::vector<scope> scopes;
     int n_labels = 0;
 
-    sm::location
+    void
+    add_name(std::string name, name_binding binding);
+
+    std::optional<name_binding>
     lookup_name(const std::string &name) const;
+
+    sm::location
+    lookup_variable(const std::string &name) const;
+
+    function_binding
+    lookup_function(const std::string &function_name) const;
 
     std::string
     gen_label();
 };
 
-sm::location
+void
+env::add_name(std::string name, name_binding binding)
+{
+    assert(!scopes.empty());
+    auto [it, inserted] = scopes.back().names.emplace(
+        std::move(name), std::move(binding));
+    if (!inserted)
+        throw std::runtime_error("duplicate \"" + name + "\" name definition");
+}
+
+std::optional<name_binding>
 env::lookup_name(const std::string &name) const
 {
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-        auto found = it->vars.find(name);
-        if (found != it->vars.end())
+        auto found = it->names.find(name);
+        if (found != it->names.end())
             return found->second;
     }
-    throw std::runtime_error("undefined variable: " + name);
+    return std::nullopt;
+}
+
+sm::location
+env::lookup_variable(const std::string &variable_name) const
+{
+    if (const auto name = lookup_name(variable_name); name)
+        if (const auto *location = std::get_if<sm::location>(&name.value()))
+            return *location;
+    throw std::runtime_error("the name \"" + variable_name +
+                             "\" does not designate a variable");
+}
+
+function_binding
+env::lookup_function(const std::string &function_name) const
+{
+    if (const auto name = lookup_name(function_name); name)
+        if (const auto *binding = std::get_if<function_binding>(&name.value()))
+            return *binding;
+    throw std::runtime_error("the name \"" + function_name +
+                             "\" does not designate a function");
 }
 
 std::string
@@ -63,9 +115,18 @@ enum class value_context {
     discarded,
 };
 
+struct function_compile_task {
+    const fun_definition_node *definition;
+    std::string label;
+    env environment;
+};
+
 struct compiler {
     sm::program program;
+    // TODO: Reuse slots on scope exit, track peak locals per function.
+    uint32_t local_count = 0;
     env environment;
+    std::vector<function_compile_task> pending_functions;
 
     bool
     emit(const ast_node &node, value_context context, const std::string &exit_label);
@@ -79,6 +140,12 @@ struct compiler {
 
     void
     declare(const ast_node &node);
+
+    void
+    remember_functions(const ast_node &node);
+
+    void
+    compile_functions();
 };
 
 void
@@ -86,25 +153,44 @@ compiler::declare(const ast_node &node)
 {
     if (auto p = dynamic_cast<const var_def_item_node *>(&node)) {
         bool global = environment.scopes.size() == 1;
-        auto &count = global ? program.global_count : program.local_count;
-        auto kind = global ? sm::location_kind::global : sm::location_kind::local;
-        auto &vars = environment.scopes.back().vars;
-        sm::location location{kind, count};
-        if (global)
-            location.value = p->name.text;
-        if (!vars.emplace(p->name.text, std::move(location)).second)
-            throw std::runtime_error("duplicate variable: " + p->name.text);
-        ++count;
-        if (global)
+        if (global) {
+            environment.add_name(p->name.text,
+                sm::location{sm::location_kind::global, p->name.text});
+            ++program.global_count;
             program.code.emplace_back(sm::global{p->name.text});
+        } else {
+            environment.add_name(p->name.text,
+                sm::location{sm::location_kind::local, local_count});
+            ++local_count;
+        }
     } else if (auto p = dynamic_cast<const var_def_node *>(&node)) {
         /* ignore is_public for now */
         declare(*p->seq);
+    } else if (auto p = dynamic_cast<const fun_definition_node *>(&node)) {
+        /*
+         * TODO: Introduce gen_function_label to generate readable, predictable
+         * function labels.
+         */
+        auto function_label = environment.gen_label();
+        environment.add_name(p->name.text,
+                             function_binding{std::move(function_label), p->args.size()});
     } else if (auto p = dynamic_cast<const seq_node *>(&node)) {
         for (const auto &item : p->items)
             declare(*item);
     } else {
         throw std::runtime_error("variable definition expected");
+    }
+}
+
+void
+compiler::remember_functions(const ast_node &node)
+{
+    if (auto p = dynamic_cast<const fun_definition_node *>(&node)) {
+        auto binding = environment.lookup_function(p->name.text);
+        pending_functions.push_back({p, std::move(binding.label), environment});
+    } else if (auto p = dynamic_cast<const seq_node *>(&node)) {
+        for (const auto &item : p->items)
+            remember_functions(*item);
     }
 }
 
@@ -120,7 +206,7 @@ compiler::emit(const ast_node &node, value_context context, const std::string &e
     if (auto p = dynamic_cast<const token_node *>(&node)) {
         switch (p->tok.type) {
             case LIDENT:
-                program.code.emplace_back(sm::load{environment.lookup_name(p->tok.text)});
+                program.code.emplace_back(sm::load{environment.lookup_variable(p->tok.text)});
                 finish(true);
                 return false;
             case TRUE:
@@ -152,7 +238,7 @@ compiler::emit(const ast_node &node, value_context context, const std::string &e
             auto target = dynamic_cast<const token_node *>(p->lhs.get());
             if (!target || target->tok.type != LIDENT)
                 throw std::runtime_error("assignment target must be a variable");
-            auto destination = environment.lookup_name(target->tok.text);
+            auto destination = environment.lookup_variable(target->tok.text);
             auto rhs_exit_label = environment.gen_label();
             bool rhs_exit_used = emit(*p->rhs, value_context::required, rhs_exit_label);
             emit_label(rhs_exit_label, rhs_exit_used);
@@ -195,7 +281,7 @@ compiler::emit(const ast_node &node, value_context context, const std::string &e
         }
         throw std::runtime_error("invalid builtin call");
     } else if (auto p = dynamic_cast<const var_def_item_node *>(&node)) {
-        auto destination = environment.lookup_name(p->name.text);
+        auto destination = environment.lookup_variable(p->name.text);
         if (p->init) {
             auto init_exit_label = environment.gen_label();
             bool init_exit_used = emit(*p->init, value_context::required, init_exit_label);
@@ -212,11 +298,21 @@ compiler::emit(const ast_node &node, value_context context, const std::string &e
         emit_label(seq_exit_label, seq_exit_used);
         finish(false);
         return false;
+    } else if (dynamic_cast<const fun_definition_node *>(&node)) {
+        /* The body is compiled later from pending_functions. */
+        finish(false);
+        return false;
     } else if (auto p = dynamic_cast<const scope_expr_node *>(&node)) {
         environment.scopes.emplace_back();
         if (p->defs) {
             /* declare and then assign */
             declare(*p->defs);
+            /*
+             * All functions have been added to the state, so we can now create
+             * compilation tasks, each with a copy of this state.
+             */
+            remember_functions(*p->defs);
+
             auto defs_exit_label = environment.gen_label();
             bool defs_exit_used = emit(*p->defs, value_context::discarded, defs_exit_label);
             emit_label(defs_exit_label, defs_exit_used);
@@ -275,18 +371,85 @@ compiler::emit(const ast_node &node, value_context context, const std::string &e
         program.code.emplace_back(sm::cjmp{sm::jump_condition::not_zero, body_label});
         finish(false);
         return false;
-
+    } else if (auto p = dynamic_cast<const fun_call_node *>(&node)) {
+        /*
+         * Only direct calls to named functions are supported for now.
+         * Functions are not first-class values, so the callee must be an
+         * identifier resolved to a function binding at compile time.
+         */
+        auto name_token = dynamic_cast<const token_node *>(p->callee.get());
+        if (!name_token || name_token->tok.type != LIDENT)
+            throw std::runtime_error("only direct calls to named functions are supported");
+        auto function_name = name_token->tok.text;
+        auto binding = environment.lookup_function(function_name);
+        if (binding.argument_count != p->args.size())
+            throw std::runtime_error("function \"" + function_name + "\" expects " +
+                                     std::to_string(binding.argument_count) +
+                                     " arguments, got " + std::to_string(p->args.size()));
+        for (const auto &arg : p->args) {
+            auto arg_exit_label = environment.gen_label();
+            bool arg_exit_used = emit(*arg, value_context::required, arg_exit_label);
+            emit_label(arg_exit_label, arg_exit_used);
+        }
+        program.code.emplace_back(sm::call{binding.label, binding.argument_count});
+        finish(true);
+        return false;
     }
     throw std::runtime_error("unsupported AST node");
+}
+
+void
+compiler::compile_functions()
+{
+    auto scopes = std::move(environment.scopes);
+    auto saved_local_count = local_count;
+    while (!pending_functions.empty()) {
+        std::vector<function_compile_task> functions;
+        functions.swap(pending_functions);
+        for (auto &function : functions) {
+            environment.scopes = std::move(function.environment.scopes);
+            /*
+             * Captures are not supported: retain only the global scope.
+             * Keep the current label counter to avoid reusing labels.
+             */
+            assert(!environment.scopes.empty());
+            environment.scopes.resize(1);
+            local_count = 0;
+            /* Create a new scope with arguments. */
+            environment.scopes.emplace_back();
+            uint32_t n_args = 0;
+            for (const auto &arg_name : function.definition->args)
+                environment.add_name(arg_name,
+                    sm::location{sm::location_kind::argument, n_args++});
+            /* Compile the body before filling in its local slot count. */
+            program.code.emplace_back(sm::label{function.label});
+            const size_t begin_index = program.code.size();
+            program.code.emplace_back(sm::begin{function.label, n_args, 0});
+            auto function_end_label = environment.gen_label();
+            bool function_end_used = emit(*function.definition->body,
+                                         value_context::required, function_end_label);
+            std::get<sm::begin>(program.code[begin_index]).n_locals = local_count;
+            emit_label(function_end_label, function_end_used);
+            program.code.emplace_back(sm::end{});
+        }
+    }
+    environment.scopes = std::move(scopes);
+    local_count = saved_local_count;
 }
 
 sm::program
 compile(const ast_node &root)
 {
     compiler ctx;
+    ctx.program.code.emplace_back(sm::label{"main"});
+    const size_t begin_index = ctx.program.code.size();
+    ctx.program.code.emplace_back(sm::begin{"main", 0, 0});
     auto exit_label = ctx.environment.gen_label();
     bool exit_used = ctx.emit(root, value_context::discarded, exit_label);
     ctx.emit_label(exit_label, exit_used);
+    std::get<sm::begin>(ctx.program.code[begin_index]).n_locals = ctx.local_count;
+    ctx.program.code.emplace_back(sm::end{});
+    ctx.compile_functions();
     return std::move(ctx.program);
 }
 

@@ -1,10 +1,10 @@
 #pragma once
 
 #include <cstdint>
-
 #include "functional"
 #include "memory"
 #include "utility"
+#include "variant"
 #include "vector"
 
 #include "grammar.h"
@@ -43,6 +43,13 @@ struct builtin_call : ast_node {
     node_ptr arg;
     builtin_call(token n, node_ptr a = nullptr)
         : name(std::move(n)), arg(std::move(a)) {}
+};
+
+struct fun_call_node : ast_node {
+    node_ptr callee;
+    std::vector<node_ptr> args;
+    fun_call_node(node_ptr c, std::vector<node_ptr> a) :
+        callee(std::move(c)), args(std::move(a)) {}
 };
 
 struct seq_node : ast_node {
@@ -90,6 +97,21 @@ struct do_while_expr_node : ast_node {
         condition(std::move(c)), body(std::move(b)) {}
 };
 
-using builder_fn = std::function<node_ptr(std::vector<node_ptr> &children)>;
+struct fun_definition_node : ast_node {
+    token name;
+    std::vector<std::string> args; /* lidents */
+    node_ptr body; /* scope_expr_node */
+    fun_definition_node(token n, std::vector<std::string> a, node_ptr b) :
+        name(std::move(n)), args(std::move(a)), body(std::move(b)) {}
+};
+
+using build_result = std::variant<
+    node_ptr,
+    token,
+    std::vector<std::string>, /* function arguments definition */
+    std::vector<node_ptr> /* expression* (function call arguments) */
+>;
+
+using builder_fn = std::function<build_result(std::vector<build_result> &children)>;
 
 extern builder_fn table[nonterminal_max][ALT_CAP];

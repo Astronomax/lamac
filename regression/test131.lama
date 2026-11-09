@@ -1,0 +1,16 @@
+-- From compilers-supplementary A08-fixnum, regression/test031.lama.
+fun test1 () {
+  a := 3
+}
+
+fun test2 (b) {
+  a := b
+}
+
+var x = read (), a, b;
+
+test1 ();
+write (a);
+
+test2 (8);
+write (a)

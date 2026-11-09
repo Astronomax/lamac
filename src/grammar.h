@@ -27,6 +27,10 @@ enum nonterminal {
     WHILE_DO_EXPRESSION,
     DO_WHILE_EXPRESSION,
     FOR_EXPRESSION,
+    FUNCTION_DEFINITION,
+    FUNCTION_ARGUMENTS,
+    FUNCTION_BODY,
+    POSTFIX_EXPRESSION_AGRS_LIST,
     nonterminal_max
 };
 
@@ -40,6 +44,7 @@ enum terminal {
     FALSE,
     FI,
     FOR,
+    FUN,
     IF,
     OD,
     OF,
@@ -71,6 +76,8 @@ enum terminal {
     COMMA,
     LBRACE,
     RBRACE,
+    LCURLY,
+    RCURLY,
     EOL_COMMENT,
     BLOCK_COMMENT_BEGIN,
     BLOCK_COMMENT_END
@@ -135,8 +142,10 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
         rule{2, { MINUS, POSTFIX_EXPRESSION }},
         rule{1, { POSTFIX_EXPRESSION }},
     }},
-    /* POSTFIX_EXPRESSION : primary */ {{
+    /* POSTFIX_EXPRESSION : primary | postfixExpression ( [ expression ( , expression )? ] ) */ {{
         rule{1, { PRIMARY }},
+        rule{3, { POSTFIX_EXPRESSION, LBRACE, RBRACE }},
+        rule{4, { POSTFIX_EXPRESSION, LBRACE, POSTFIX_EXPRESSION_AGRS_LIST, RBRACE }},
     }},
     /* PRIMARY : DECIMAL | LIDENT | 'true' | 'false' | 'skip'
               | '(' scopeExpression ')'
@@ -166,8 +175,9 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
     /* VAR_DEF : 'var' variableDefinitionSequence ';' */ {{
         rule{3, { VAR, VAR_DEF_SEQ, SEMICOLON }},
     }},
-    /* DEFINITION : variableDefinition */ {{
+    /* DEFINITION : variableDefinition | functionDefinition */ {{
         rule{1, { VAR_DEF }},
+        rule{1, { FUNCTION_DEFINITION }},
     }},
     /* DEFINITION_LIST : definition | definition* definition */ {{
         rule{1, { DEFINITION }},
@@ -194,5 +204,21 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
     /* FOR_EXPRESSION : 'for' scopeExpression ',' expression ',' expression
                         'do' scopeExpresssion 'od' */ {{
         rule{9, { FOR, SCOPE_EXPR, COMMA, EXPRESSION, COMMA, EXPRESSION, DO, SCOPE_EXPR, OD }},
+    }},
+    /* FUNCTION_DEFINITION : 'fun' LIDENT '(' functionArguments ')' functionBody |
+                             'fun' LIDENT '(' ')' functionBody */ {{
+        rule{5, { FUN, LIDENT, LBRACE, RBRACE, FUNCTION_BODY }},
+        rule{6, { FUN, LIDENT, LBRACE, FUNCTION_ARGUMENTS, RBRACE, FUNCTION_BODY }},
+    }},
+    /* FUNCTION_ARGUMENTS : */ {{
+        rule{1, { LIDENT }},
+        rule{3, { FUNCTION_ARGUMENTS, COMMA, LIDENT }},
+    }},
+    /* FUNCTION_BODY : '{' scopeExpression '}' */ {{
+        rule{3, { LCURLY, SCOPE_EXPR, RCURLY }},
+    }},
+    /* POSTFIX_EXPRESSION_AGRS_LIST */ {{
+        rule{1, { EXPRESSION }},
+        rule{3, { POSTFIX_EXPRESSION_AGRS_LIST, COMMA, EXPRESSION }},
     }},
 }};

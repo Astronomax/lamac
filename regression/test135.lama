@@ -1,0 +1,19 @@
+-- From compilers-supplementary A08-fixnum, regression/test035.lama.
+var n, i, result;
+
+fun fact (n) {
+  if n <= 1
+  then result := 1
+  else
+    fact (n-1);
+    result := result * n
+  fi
+}
+
+n := read ();
+
+for i := n, i >= 1, i := i-1 do
+  fact (i);
+  write (i);
+  write (result)
+od

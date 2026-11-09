@@ -1,0 +1,13 @@
+-- Argument order, argument assignment, and calls with live spilled values.
+fun digits(a, b, c, d, e, f) {
+    a := a + 1;
+    a * 100000 + b * 10000 + c * 1000 + d * 100 + e * 10 + f
+}
+fun identity(x) { x }
+var x = 0;
+write(digits(x := x + 1, x := x + 1, x := x + 1,
+             x := x + 1, x := x + 1, x := x + 1));
+write(x);
+write(1 + (2 + (3 + (4 + (5 + identity(6))))));
+write(identity(7) + identity(8));
+write(digits(1, 2, 3, 4, identity(5), identity(6)))
