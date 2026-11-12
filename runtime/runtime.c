@@ -652,7 +652,10 @@ void *Lclone (void *p) {
 #endif
   __pre_gc ();
   
-  if (UNBOXED(p)) return p;
+  if (UNBOXED(p)) {
+    __post_gc ();
+    return p;
+  }
   else {
     data *a = TO_DATA(p);
     int t   = TAG(a->tag), l = LEN(a->tag);
@@ -844,7 +847,7 @@ extern int Lcompare (void *p, void *q) {
 
         for (; i<la; i++) {
           int c = Lcompare (((void**) a->contents)[i], ((void**) b->contents)[i]);
-          if (c != BOX(0)) return BOX(c);
+          if (c != BOX(0)) return c;
         }
     
         return BOX(0);
@@ -1488,7 +1491,7 @@ extern int Lwrite (int n) {
   printf ("%d\n", UNBOX(n));
   fflush (stdout);
 
-  return 0;
+  return BOX(0);
 }
 
 extern int Lrandom (int n) {
@@ -1582,18 +1585,17 @@ extern void __gc_root_scan_stack ();
 /*           Mark-and-copy                  */
 /* ======================================== */
 
-//static size_t SPACE_SIZE = 16;
-static size_t SPACE_SIZE = 256 * 1024 * 1024;
-// static size_t SPACE_SIZE = 128;
-// static size_t SPACE_SIZE = 1024 * 1024;
+/* Number of words in one semispace: 4 MiB in the 32-bit runtime. */
+static size_t SPACE_SIZE = 1024 * 1024;
 
 static int free_pool (pool * p) {
-  size_t *a = p->begin, b = p->size;
+  size_t *a = p->begin;
+  size_t bytes = p->size * sizeof(*a);
   p->begin   = NULL;
   p->size    = 0;
   p->end     = NULL;
   p->current = NULL;
-  return munmap((void *)a, b);
+  return munmap((void *)a, bytes);
 }
 
 static void init_to_space (int flag) {
@@ -1890,8 +1892,8 @@ extern void __init (void) {
   from_space.begin = mmap (NULL, space_size, PROT_READ | PROT_WRITE,
     			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
   to_space.begin   = NULL;
-  if (to_space.begin == MAP_FAILED) {
-    perror ("EROOR: init_pool: mmap failed\n");
+  if (from_space.begin == MAP_FAILED) {
+    perror ("ERROR: init_pool: mmap failed\n");
     exit   (1);
   }
   from_space.current = from_space.begin;

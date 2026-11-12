@@ -25,8 +25,6 @@ struct global {
     std::string name;
 };
 
-struct read {};
-struct write {};
 struct drop {};
 
 struct load {
@@ -93,10 +91,13 @@ struct call {
     size_t n_args;
 };
 
+struct sexp {
+    std::string name;
+    size_t n_items;
+};
+
 using instruction = std::variant<
     global,
-    read,
-    write,
     drop,
     binary,     /* (s) */
     load,       /* (x) */
@@ -107,7 +108,8 @@ using instruction = std::variant<
     cjmp,
     begin,
     end,
-    call
+    call,
+    sexp
 >;
 
 struct program {

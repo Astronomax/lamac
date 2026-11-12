@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "functional"
 #include "memory"
+#include "optional"
 #include "utility"
 #include "variant"
 #include "vector"
@@ -36,13 +37,6 @@ struct unary_neg : ast_node {
 struct number_literal : ast_node {
     int32_t num;
     number_literal(int32_t n) : num(n) {}
-};
-
-struct builtin_call : ast_node {
-    token name;
-    node_ptr arg;
-    builtin_call(token n, node_ptr a = nullptr)
-        : name(std::move(n)), arg(std::move(a)) {}
 };
 
 struct fun_call_node : ast_node {
@@ -105,6 +99,13 @@ struct fun_definition_node : ast_node {
         name(std::move(n)), args(std::move(a)), body(std::move(b)) {}
 };
 
+struct s_expression_node : ast_node {
+    token name;
+    std::vector<node_ptr> items; /* expressions */
+    s_expression_node(token n, std::vector<node_ptr> i) :
+        name(std::move(n)), items(std::move(i)) {}
+};
+
 using build_result = std::variant<
     node_ptr,
     token,
@@ -112,6 +113,6 @@ using build_result = std::variant<
     std::vector<node_ptr> /* expression* (function call arguments) */
 >;
 
-using builder_fn = std::function<build_result(std::vector<build_result> &children)>;
+using builder_fn = std::function<std::optional<build_result>(std::vector<build_result> &children)>;
 
 extern builder_fn table[nonterminal_max][ALT_CAP];

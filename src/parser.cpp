@@ -6,6 +6,7 @@
 #include "array"
 #include "cassert"
 #include "cstddef"
+#include "optional"
 #include "utility"
 #include "vector"
 
@@ -67,10 +68,10 @@ struct mdarray {
     }
 };
 
-build_result
+std::optional<build_result>
 reconstruct(int i, int j, nonterminal nt1, size_t alt1,
             const std::vector<token> &tokens,
-            const mdarray<int, 5> &dp, const mdarray<int, 3> &dp_agg)
+            const mdarray<int, 5> &dp, const mdarray<std::vector<int>, 3> &dp_agg)
 {
     const rule &r = grammar[nt1][alt1];
     size_t len = r.len;
@@ -84,10 +85,19 @@ reconstruct(int i, int j, nonterminal nt1, size_t alt1,
             children[pos] = tokens[i];
         } else {
             nonterminal nt2 = std::get<nonterminal>(sym);
-            int alt2 = dp_agg(i, k, nt2);
-            assert(alt2 != -1);
-            children[pos] = reconstruct(i, k, nt2, alt2, tokens, dp, dp_agg);
+            assert(!dp_agg(i, k, nt2).empty());
+            for (auto alt2 : dp_agg(i, k, nt2)) {
+                auto result = reconstruct(i, k, nt2, alt2, tokens, dp, dp_agg);
+                /* Successful alternative found */
+                if (result.has_value()) {
+                    children[pos] = std::move(result.value());
+                    goto out;
+                }
+            }
+            /* No successful alternative */
+            return std::nullopt;
         }
+    out:
         i = k;
     }
     assert(i == j);
@@ -105,7 +115,7 @@ parse(const std::vector<token> &tokens)
      * m    - suffix position in the rule,  0, ..., RULE_CAP
      */
     mdarray<int, 5> dp({n + 1, n + 1, nonterminal_max, ALT_CAP, RULE_CAP}, -1);
-    mdarray<int, 3> dp_agg({n + 1, n + 1, nonterminal_max}, -1);
+    mdarray<std::vector<int>, 3> dp_agg({n + 1, n + 1, nonterminal_max}, {});
 
     for (int len = 1; len <= n; len++) {
         for (int i = 0; i + len <= n; i++) {
@@ -134,7 +144,7 @@ parse(const std::vector<token> &tokens)
                                         dp(i, j, nt1, alt, m) = j;
                                 } else {
                                     nonterminal nt2 = std::get<nonterminal>(symbol);
-                                    if (dp_agg(i, j, nt2) != -1)
+                                    if (!dp_agg(i, j, nt2).empty())
                                         dp(i, j, nt1, alt, m) = j;
                                 }
                                 continue;
@@ -149,7 +159,7 @@ parse(const std::vector<token> &tokens)
                                 nonterminal nt2 = std::get<nonterminal>(symbol);
                                 /* iterate over split position */
                                 for (int k = i; k <= j; k++) {
-                                    if (dp_agg(i, k, nt2) != -1 &&
+                                    if (!dp_agg(i, k, nt2).empty() &&
                                         dp(k, j, nt1, alt, m - 1) != -1) {
                                         dp(i, j, nt1, alt, m) = k;
                                         break;
@@ -157,18 +167,25 @@ parse(const std::vector<token> &tokens)
                                 }
                             }
                         }
-                        if (dp_agg(i, j, nt1) == -1 &&
-                            dp(i, j, nt1, alt, len1 - 1) != -1) {
-                            dp_agg(i, j, nt1) = alt;
-                            changed = true;
+                        if (dp(i, j, nt1, alt, len1 - 1) != -1) {
+                            auto &alternatives = dp_agg(i, j, nt1);
+                            if (std::find(alternatives.begin(), alternatives.end(), alt) == alternatives.end()) {
+                                alternatives.push_back(alt);
+                                changed = true;
+                            }
                         }
                     }
                 }
             }
         }
     }
-    int alt = dp_agg(0, n, SCOPE_EXPR);
-    if (alt == -1)
-        return nullptr;
-    return std::get<node_ptr>(reconstruct(0, n, SCOPE_EXPR, alt, tokens, dp, dp_agg));
+    for (auto alt : dp_agg(0, n, SCOPE_EXPR)) {
+        auto result = reconstruct(0, n, SCOPE_EXPR, alt, tokens, dp, dp_agg);
+        if (result.has_value()) {
+            auto &value = result.value();
+            if (auto *ast = std::get_if<node_ptr>(&value))
+                return std::move(*ast);
+        }
+    }
+    return nullptr;
 }

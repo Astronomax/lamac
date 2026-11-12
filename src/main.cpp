@@ -22,8 +22,6 @@ extern char **environ;
 static const char *term_name(enum terminal t) {
     switch (t) {
         case VAR:        return "var";
-        case READ:       return "read";
-        case WRITE:      return "write";
         case SKIP:       return "skip";
         case TRUE:       return "true";
         case FALSE:      return "false";
@@ -81,11 +79,6 @@ static void dump(const node_ptr &node, int depth) {
     if (auto p = dynamic_cast<unary_neg *>(node.get())) {
         std::cout << "unary_neg\n";
         dump(p->operand, depth + 1);
-        return;
-    }
-    if (auto p = dynamic_cast<builtin_call *>(node.get())) {
-        std::cout << "builtin:" << term_name(p->name.type) << "\n";
-        if (p->arg) dump(p->arg, depth + 1);
         return;
     }
     if (auto p = dynamic_cast<var_def_item_node *>(node.get())) {

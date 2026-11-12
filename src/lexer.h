@@ -15,8 +15,6 @@ struct token_spec {
 };
 
 inline constexpr token_spec token_specs[] = {
-    {READ,        "read"},
-    {WRITE,       "write"},
     /* keywords */
     {DO,          "do"},
     {ELIF,        "elif"},

@@ -152,7 +152,7 @@ void
 compiler::declare(const ast_node &node)
 {
     if (auto p = dynamic_cast<const var_def_item_node *>(&node)) {
-        bool global = environment.scopes.size() == 1;
+        bool global = environment.scopes.size() == 2;
         if (global) {
             environment.add_name(p->name.text,
                 sm::location{sm::location_kind::global, p->name.text});
@@ -264,22 +264,6 @@ compiler::emit(const ast_node &node, value_context context, const std::string &e
         program.code.emplace_back(sm::binary{sm::binary_op::minus});
         finish(true);
         return false;
-    } else if (auto p = dynamic_cast<const builtin_call *>(&node)) {
-        if (p->name.type == READ && !p->arg) {
-            program.code.emplace_back(sm::read{});
-            finish(true);
-            return false;
-        }
-        if (p->name.type == WRITE && p->arg) {
-            auto arg_exit_label = environment.gen_label();
-            bool arg_exit_used = emit(*p->arg, value_context::required, arg_exit_label);
-            emit_label(arg_exit_label, arg_exit_used);
-            program.code.emplace_back(sm::write{});
-            program.code.emplace_back(sm::drop{});
-            finish(false);
-            return false;
-        }
-        throw std::runtime_error("invalid builtin call");
     } else if (auto p = dynamic_cast<const var_def_item_node *>(&node)) {
         auto destination = environment.lookup_variable(p->name.text);
         if (p->init) {
@@ -394,6 +378,16 @@ compiler::emit(const ast_node &node, value_context context, const std::string &e
         program.code.emplace_back(sm::call{binding.label, binding.argument_count});
         finish(true);
         return false;
+    } else if (auto p = dynamic_cast<const s_expression_node *>(&node)) {
+        for (const auto &item : p->items) {
+            auto item_exit_label = environment.gen_label();
+            bool item_exit_used = emit(*item, value_context::required, item_exit_label);
+            emit_label(item_exit_label, item_exit_used);
+        }
+        assert(p->name.type == UIDENT);
+        program.code.emplace_back(sm::sexp{p->name.text, p->items.size()});
+        finish(true);
+        return false;
     }
     throw std::runtime_error("unsupported AST node");
 }
@@ -409,11 +403,11 @@ compiler::compile_functions()
         for (auto &function : functions) {
             environment.scopes = std::move(function.environment.scopes);
             /*
-             * Captures are not supported: retain only the global scope.
+             * Captures are not supported: retain the builtin and global scopes.
              * Keep the current label counter to avoid reusing labels.
              */
-            assert(!environment.scopes.empty());
-            environment.scopes.resize(1);
+            assert(environment.scopes.size() >= 2);
+            environment.scopes.resize(2);
             local_count = 0;
             /* Create a new scope with arguments. */
             environment.scopes.emplace_back();
@@ -441,6 +435,19 @@ sm::program
 compile(const ast_node &root)
 {
     compiler ctx;
+    /* Add builtins */
+    ctx.environment.scopes.emplace_back();
+    ctx.environment.add_name("read", function_binding{"Lread", 0});
+    ctx.environment.add_name("write", function_binding{"Lwrite", 1});
+    ctx.environment.add_name("length", function_binding{"Blength", 1});
+    ctx.environment.add_name("elem", function_binding{"Belem", 2});
+    ctx.environment.add_name("fst", function_binding{"Lfst", 1});
+    ctx.environment.add_name("snd", function_binding{"Lsnd", 1});
+    ctx.environment.add_name("hash", function_binding{"Lhash", 1});
+    ctx.environment.add_name("compare", function_binding{"Lcompare", 2});
+    ctx.environment.add_name("clone", function_binding{"Lclone", 1});
+    ctx.environment.add_name("string", function_binding{"Bstringval", 1});
+    /* Compile main */
     ctx.program.code.emplace_back(sm::label{"main"});
     const size_t begin_index = ctx.program.code.size();
     ctx.program.code.emplace_back(sm::begin{"main", 0, 0});
@@ -450,6 +457,8 @@ compile(const ast_node &root)
     std::get<sm::begin>(ctx.program.code[begin_index]).n_locals = ctx.local_count;
     ctx.program.code.emplace_back(sm::end{});
     ctx.compile_functions();
+    /* Builtins */
+    assert(ctx.environment.scopes.size() == 1);
     return std::move(ctx.program);
 }
 

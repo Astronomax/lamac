@@ -30,13 +30,12 @@ enum nonterminal {
     FUNCTION_DEFINITION,
     FUNCTION_ARGUMENTS,
     FUNCTION_BODY,
-    POSTFIX_EXPRESSION_AGRS_LIST,
+    EXPRESSION_LIST,
+    S_EXPRESSION,
     nonterminal_max
 };
 
 enum terminal {
-    READ,
-    WRITE,
     /* keywords */
     DO,
     ELIF,
@@ -145,12 +144,11 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
     /* POSTFIX_EXPRESSION : primary | postfixExpression ( [ expression ( , expression )? ] ) */ {{
         rule{1, { PRIMARY }},
         rule{3, { POSTFIX_EXPRESSION, LBRACE, RBRACE }},
-        rule{4, { POSTFIX_EXPRESSION, LBRACE, POSTFIX_EXPRESSION_AGRS_LIST, RBRACE }},
+        rule{4, { POSTFIX_EXPRESSION, LBRACE, EXPRESSION_LIST, RBRACE }},
     }},
     /* PRIMARY : DECIMAL | LIDENT | 'true' | 'false' | 'skip'
-              | '(' scopeExpression ')'
-              | 'read' '(' ')'
-              | 'write' '(' expression ')' */ {{
+              | '(' scopeExpression ')' | ifExpression | whileDoExpression
+              | doWhileExpression | forExpression | S-expression*/ {{
         rule{1, { DECIMAL }},
         rule{1, { LIDENT }},
         rule{1, { TRUE }},
@@ -161,8 +159,7 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
         rule{1, { WHILE_DO_EXPRESSION }},
         rule{1, { DO_WHILE_EXPRESSION }},
         rule{1, { FOR_EXPRESSION }},
-        rule{3, { READ,   LBRACE,     RBRACE }},
-        rule{4, { WRITE,  LBRACE,     EXPRESSION, RBRACE }},
+        rule{1, { S_EXPRESSION }},
     }},
     /* VAR_DEF_ITEM : LIDENT | LIDENT '=' basicExpression */ {{
         rule{1, { LIDENT }},
@@ -217,8 +214,13 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
     /* FUNCTION_BODY : '{' scopeExpression '}' */ {{
         rule{3, { LCURLY, SCOPE_EXPR, RCURLY }},
     }},
-    /* POSTFIX_EXPRESSION_AGRS_LIST */ {{
+    /* EXPRESSION_LIST */ {{
         rule{1, { EXPRESSION }},
-        rule{3, { POSTFIX_EXPRESSION_AGRS_LIST, COMMA, EXPRESSION }},
+        rule{3, { EXPRESSION_LIST, COMMA, EXPRESSION }},
     }},
+    /* S_EXPRESSION : UIDENT [ '(' expression [ ( , expression )* ] ')' ] */ {{
+        rule{1, { UIDENT  }},
+        rule{4, { UIDENT, LBRACE, EXPRESSION_LIST, RBRACE }},
+        rule{3, { UIDENT, LBRACE, RBRACE }},
+    }}
 }};

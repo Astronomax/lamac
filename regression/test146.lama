@@ -1,0 +1,32 @@
+-- Builtins on S-expressions and integers, including collection after clone(7).
+var pair = Pair(11, 22), copy = clone(pair),
+    rendered = string(Pair(1, Nil)), i = 0;
+
+fun churn(n) {
+    var keep = Pair(1, 2), i = 0;
+    while i < n do Pair(i, Nil); i := i + 1 od;
+    elem(keep, 1)
+}
+
+write(elem(pair, 0));
+write(elem(pair, 1));
+write(fst(pair));
+write(snd(pair));
+write(pair == copy);
+write(compare(Pair(1), Pair(3)));
+write(compare(1, 2));
+write(compare(2, 1));
+write(hash(pair) == hash(copy));
+write(clone(7));
+write(churn(300000));
+write(compare(pair, copy));
+write(hash(pair) == hash(copy));
+write(length(string(-120)));
+write(elem(string(-120), 0));
+write(elem(clone(Pair(5, 6)), 1));
+write(compare(string(42), string(42)));
+write(length(rendered));
+while i < length(rendered) do
+    write(elem(rendered, i));
+    i := i + 1
+od

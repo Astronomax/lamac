@@ -4,11 +4,13 @@
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <sstream>
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -53,11 +55,21 @@ constexpr std::array allocatable_regs = {
  * - Function calls preserve values ​​that must persist across the call.
  * - The prologue and epilogue adhere to the chosen ABI.
  * - Local variables and temporary slots are addressed relative to `ebp`.
+ * - Variables, arguments and symbolic stack values use the runtime representation:
+ * integers are tagged as (n << 1) | 1, while heap values remain pointers.
+ * Arithmetic temporarily unboxes integers in scratch registers.
  */
 
 enum {
     WORD_SIZE = 4
 };
+
+constexpr int32_t
+box_integer(int32_t value)
+{
+    /* Shift unsigned bits to avoid undefined behavior for negative integers. */
+    return static_cast<int32_t>((static_cast<uint32_t>(value) << 1) | 1);
+}
 
 /* We need to distinguish the following operand types: */
 struct stack_slot {
@@ -72,6 +84,12 @@ struct global_memory {
     std::string name;
 };
 
+/* Address of a static label, as opposed to the value stored at that label. */
+struct label_address {
+    std::string label;
+};
+
+/* Raw machine immediate: Lama integers must be boxed, addresses and offsets not. */
 struct immediate {
     int32_t value;
 };
@@ -81,6 +99,7 @@ using operand = std::variant<
     stack_slot,
     argument_slot,
     global_memory,
+    label_address,
     immediate
     /* Indirect operands are not yet being used */
 >;
@@ -130,6 +149,9 @@ struct compiler {
     size_t stack_slots = 0;
 
     std::string current_function_label;
+    std::vector<std::pair<std::string, std::string>> strings;
+
+    std::string add_string(const std::string &value);
 
     operand stack_location(size_t depth);
     std::vector<operand> make_stack(size_t depth);
@@ -138,6 +160,17 @@ struct compiler {
 
     std::vector<reg> live_registers(size_t depth);
 };
+
+std::string
+compiler::add_string(const std::string &value)
+{
+    for (const auto &[label, text] : strings)
+        if (text == value)
+            return label;
+    auto label = ".Lstring_" + std::to_string(strings.size());
+    strings.emplace_back(label, value);
+    return label;
+}
 
 /*
  * Returns the canonical location for the given symbolic stack depth.
@@ -219,6 +252,8 @@ operand_to_string(const operand &operand)
         return std::to_string((arg->index + 2) * WORD_SIZE) + "(%ebp)";
     } else if (const auto *global_op = std::get_if<global_memory>(&operand)) {
         return global_op->name;
+    } else if (const auto *address = std::get_if<label_address>(&operand)) {
+        return "$" + address->label;
     } else if (const auto *immediate_op = std::get_if<immediate>(&operand)) {
         return "$" + std::to_string(immediate_op->value);
     } else {
@@ -243,6 +278,20 @@ code_append_instruction(std::stringstream &code, const std::string &insn,
         separator = ",\t";
     }
     code << '\n';
+}
+
+void
+code_append_box(std::stringstream &code, reg value)
+{
+    code_append_instruction(code, "shll", {immediate{1}, value});
+    code_append_instruction(code, "orl", {immediate{1}, value});
+}
+
+void
+code_append_unbox(std::stringstream &code, reg value)
+{
+    /* Arithmetic shift removes the tag while preserving the sign. */
+    code_append_instruction(code, "sarl", {immediate{1}, value});
 }
 
 bool
@@ -371,17 +420,17 @@ calculate_entry_depths(const sm::program &program)
             required = 2;
         else if (std::holds_alternative<sm::drop>(insn) ||
                  std::holds_alternative<sm::cjmp>(insn) ||
-                 std::holds_alternative<sm::store>(insn) ||
-                 std::holds_alternative<sm::write>(insn))
+                 std::holds_alternative<sm::store>(insn))
             required = 1;
         if (const auto *call = std::get_if<sm::call>(&insn))
             required = call->n_args;
+        if (const auto *sexp = std::get_if<sm::sexp>(&insn))
+            required = sexp->n_items;
         if (depth < required)
             throw std::runtime_error("symbolic stack underflow at instruction "
                                      + std::to_string(pc));
         if (std::holds_alternative<sm::constant>(insn) ||
-            std::holds_alternative<sm::load>(insn) ||
-            std::holds_alternative<sm::read>(insn))
+            std::holds_alternative<sm::load>(insn))
             ++depth;
         else if (std::holds_alternative<sm::binary>(insn) ||
                  std::holds_alternative<sm::drop>(insn) ||
@@ -389,6 +438,8 @@ calculate_entry_depths(const sm::program &program)
             --depth;
         if (const auto *call = std::get_if<sm::call>(&insn))
             depth = depth - call->n_args + 1;
+        if (const auto *sexp = std::get_if<sm::sexp>(&insn))
+            depth = depth - sexp->n_items + 1;
         if (std::holds_alternative<sm::end>(insn))
             continue;
         if (auto p = std::get_if<sm::jmp>(&insn)) {
@@ -462,7 +513,7 @@ compile(const sm::program &p_sm)
     /* Global variables will not be visible outside this file. */
     for (const auto &insn : p_sm.code)
         if (const auto *global = std::get_if<sm::global>(&insn))
-            code << "global_" << global->name << ":\t.int\t0\n";
+            code << "global_" << global->name << ":\t.int\t" << box_integer(0) << '\n';
     code << "\t.text\n";
 
     for (size_t pc = 0; pc < p_sm.code.size(); ++pc) {
@@ -472,25 +523,6 @@ compile(const sm::program &p_sm)
         const auto &insn = p_sm.code[pc];
         if (std::holds_alternative<sm::global>(insn)) {
             continue;
-        } else if (std::holds_alternative<sm::read>(insn)) {
-            code_append_function_call(code, ctx, "Lread", 0);
-            /*
-             * The i386 System V ABI returns an int in eax, so Lread leaves its
-             * tagged result there. An arithmetic right shift removes the tag
-             * while preserving the sign.
-             */
-            code_append_instruction(code, "sarl", {immediate{1}, reg::eax});
-            code_append_move(code, reg::eax, ctx.allocate());
-        } else if (std::holds_alternative<sm::write>(insn)) {
-            /* WRITE keeps its value. The call consumes only the argument copy. */
-            assert(!ctx.symbolic_stack.empty());
-            const auto argument = ctx.symbolic_stack.back();
-            /* BOX(n) = (n << 1) | 1 */
-            code_append_move(code, argument, reg::eax);
-            code_append_instruction(code, "shll", {immediate{1}, reg::eax});
-            code_append_instruction(code, "orl", {immediate{1}, reg::eax});
-            ctx.symbolic_stack.push_back(reg::eax);
-            code_append_function_call(code, ctx, "Lwrite", 1);
         } else if (std::holds_alternative<sm::drop>(insn)) {
             /* Drop only affects a symbolic stack */
             assert(!ctx.symbolic_stack.empty());
@@ -503,6 +535,7 @@ compile(const sm::program &p_sm)
             ctx.symbolic_stack.pop_back();
             const auto result = ctx.allocate();
             if (is_cmp(binary_insn.op)) {
+                /* Boxing preserves the signed order of representable integers. */
                 /* One of the operands must be a register, so move lhs to eax */
                 code_append_move(code, lhs, reg::eax);
                 code_append_instruction(code, "cmpl", {rhs, reg::eax});
@@ -537,25 +570,29 @@ compile(const sm::program &p_sm)
                     default:
                     abort();
                 }
+                code_append_box(code, reg::eax);
                 code_append_move(code, reg::eax, result);
             } else if (binary_insn.op == sm::binary_op::plus ||
                        binary_insn.op == sm::binary_op::minus ||
                        binary_insn.op == sm::binary_op::mul) {
-                /* One of the operands must be a register, so move lhs to eax */
                 code_append_move(code, lhs, reg::eax);
+                code_append_unbox(code, reg::eax);
+                code_append_move(code, rhs, reg::edx);
+                code_append_unbox(code, reg::edx);
                 switch (binary_insn.op) {
                     case (sm::binary_op::plus):
-                    code_append_instruction(code, "addl", {rhs, reg::eax});
+                    code_append_instruction(code, "addl", {reg::edx, reg::eax});
                     break;
                     case (sm::binary_op::minus):
-                    code_append_instruction(code, "subl", {rhs, reg::eax});
+                    code_append_instruction(code, "subl", {reg::edx, reg::eax});
                     break;
                     case (sm::binary_op::mul):
-                    code_append_instruction(code, "imull", {rhs, reg::eax});
+                    code_append_instruction(code, "imull", {reg::edx, reg::eax});
                     break;
                     default:
                     abort();
                 }
+                code_append_box(code, reg::eax);
                 code_append_move(code, reg::eax, result);
             } else if (binary_insn.op == sm::binary_op::conjunction ||
                        binary_insn.op == sm::binary_op::disjunction) {
@@ -566,16 +603,17 @@ compile(const sm::program &p_sm)
                  * the upper bits here, but those tests require canonical results.
                  * "any non-zero value is treated as truth and zero as falsity,
                  * AND THE RESULT RESPECTS THIS CONVENTION".
+                 * Inputs are tagged, so compare against boxed zero (1).
                  * MOV clears eax without changing the flags used by SETNE.
                  */
                 code_append_move(code, rhs, reg::eax);
-                code_append_instruction(code, "cmpl", {immediate{0}, reg::eax});
+                code_append_instruction(code, "cmpl", {immediate{box_integer(0)}, reg::eax});
                 code_append_move(code, immediate{0}, reg::eax);
                 code_append_instruction(code, "setne", {reg::al});
                 code_append_move(code, reg::eax, reg::edx);
                 /* Same for the lhs. */
                 code_append_move(code, lhs, reg::eax);
-                code_append_instruction(code, "cmpl", {immediate{0}, reg::eax});
+                code_append_instruction(code, "cmpl", {immediate{box_integer(0)}, reg::eax});
                 code_append_move(code, immediate{0}, reg::eax);
                 code_append_instruction(code, "setne", {reg::al});
                 switch (binary_insn.op) {
@@ -588,6 +626,7 @@ compile(const sm::program &p_sm)
                     default:
                     abort();
                 }
+                code_append_box(code, reg::eax);
                 code_append_move(code, reg::eax, result);
             } else if (binary_insn.op == sm::binary_op::div) {
                 /*
@@ -596,15 +635,20 @@ compile(const sm::program &p_sm)
                  * DX:AX, or EDX:EAX registers". So move lhs (dividend) to eax;
                 */
                 code_append_move(code, lhs, reg::eax);
+                code_append_unbox(code, reg::eax);
+                code_append_move(code, rhs, reg::edx);
+                code_append_unbox(code, reg::edx);
+                /*
+                 * Keep the divisor in the result location: cltd overwrites edx.
+                 * Both operands have been read, so reusing lhs's slot is safe.
+                 * Moving from edx also avoids 'mov'ing between memory operands,
+                 * which code_append_move implements through eax.
+                 */
+                code_append_move(code, reg::edx, result);
                 /* idivl divides EDX:EAX, so let's extend 32-bit eax to 64-bit edx:eax. */
                 code_append_instruction(code, "cltd", {});
-                auto divisor = rhs;
-                if (std::holds_alternative<immediate>(divisor)) {
-                    /* IDIV accepts only a register or memory operand. */
-                    code_append_move(code, divisor, result);
-                    divisor = result;
-                }
-                code_append_instruction(code, "idivl", {divisor});
+                code_append_instruction(code, "idivl", {result});
+                code_append_box(code, reg::eax);
                 code_append_move(code, reg::eax, result);
             } else if (binary_insn.op == sm::binary_op::mod) {
                 /*
@@ -615,14 +659,14 @@ compile(const sm::program &p_sm)
                  * rather than returning a 64-bit quotient.
                  */
                 code_append_move(code, lhs, reg::eax);
+                code_append_unbox(code, reg::eax);
+                code_append_move(code, rhs, reg::edx);
+                code_append_unbox(code, reg::edx);
+                /* Preserve the unboxed divisor before cltd overwrites edx. */
+                code_append_move(code, reg::edx, result);
                 code_append_instruction(code, "cltd", {});
-                auto divisor = rhs;
-                if (std::holds_alternative<immediate>(divisor)) {
-                    /* Reuse the result location to hold an immediate divisor. */
-                    code_append_move(code, divisor, result);
-                    divisor = result;
-                }
-                code_append_instruction(code, "idivl", {divisor});
+                code_append_instruction(code, "idivl", {result});
+                code_append_box(code, reg::edx);
                 code_append_move(code, reg::edx, result);
             } else {
                 abort();
@@ -639,7 +683,7 @@ compile(const sm::program &p_sm)
             code_append_move(code, source, sm_location_to_operand(store_insn.destination));
         } else if (std::holds_alternative<sm::constant>(insn)) {
             const auto &constant_insn = std::get<sm::constant>(insn);
-            ctx.symbolic_stack.emplace_back(immediate{constant_insn.value});
+            ctx.symbolic_stack.emplace_back(immediate{box_integer(constant_insn.value)});
         } else if (std::holds_alternative<sm::label>(insn)) {
             const auto &label = std::get<sm::label>(insn).label;
             if (falls_through) {
@@ -662,7 +706,7 @@ compile(const sm::program &p_sm)
             /* Preserve the condition while materializing the remaining values. */
             code_append_move(code, condition, reg::edx);
             ctx.materialize_stack(code);
-            code_append_instruction(code, "cmpl", {immediate{0}, reg::edx});
+            code_append_instruction(code, "cmpl", {immediate{box_integer(0)}, reg::edx});
             switch (jump.condition) {
                 case sm::jump_condition::zero:
                 code_append_instruction(code, "je", {jump.label});
@@ -682,11 +726,14 @@ compile(const sm::program &p_sm)
             code_append_instruction(code, "pushl", {reg::ebp});
             code_append_move(code, reg::esp, reg::ebp);
             code_append_instruction(code, "subl", {"$" + begin.label + "_SIZE", reg::esp});
+            /* Initialize the heap and mark main's frame as the stack root boundary. */
+            if (begin.label == "main")
+                code_append_instruction(code, "call", {"__gc_init"});
         } else if (std::holds_alternative<sm::end>(insn)) {
             /* Epilogue. */
             operand ret;
             if (ctx.current_function_label == "main") {
-                /* Return 0. */
+                /* main returns an unboxed process exit status to the C runtime. */
                 ret = immediate{0};
             } else {
                 ret = ctx.symbolic_stack.back();
@@ -705,10 +752,53 @@ compile(const sm::program &p_sm)
             const auto &call = std::get<sm::call>(insn);
             code_append_function_call(code, ctx, call.label, call.n_args);
             code_append_move(code, reg::eax, ctx.allocate());
+        } else if (std::holds_alternative<sm::sexp>(insn)) {
+            const auto &sexp = std::get<sm::sexp>(insn);
+            /* LtagHash in the current runtime accepts at most four characters. */
+            if (sexp.name.size() > 4)
+                throw std::runtime_error("constructor name exceeds the runtime limit of 4 characters: " +
+                                         sexp.name);
+            /*
+             * Bsexp expects a boxed count before the fields. Insert it into
+             * the symbolic stack, moving fields backwards to avoid overwriting
+             * their values and to preserve canonical locations by depth.
+             */
+            assert(ctx.symbolic_stack.size() >= sexp.n_items);
+            const size_t first_item = ctx.symbolic_stack.size() - sexp.n_items;
+            ctx.allocate();
+            for (size_t depth = ctx.symbolic_stack.size() - 1;
+                 depth > first_item; --depth) {
+                const auto destination = ctx.stack_location(depth);
+                code_append_move(code, ctx.symbolic_stack[depth - 1], destination);
+                ctx.symbolic_stack[depth] = destination;
+            }
+            const auto count_location = ctx.stack_location(first_item);
+            const auto boxed_count = box_integer(static_cast<int32_t>(sexp.n_items + 1));
+            code_append_move(code, immediate{boxed_count}, count_location);
+            ctx.symbolic_stack[first_item] = count_location;
+            /*
+             * The constructor tag could be computed at compile time. For now,
+             * call LtagHash to reuse the existing runtime implementation unchanged.
+             * Its result is already boxed for Bsexp.
+             */
+            ctx.symbolic_stack.emplace_back(label_address{ctx.add_string(sexp.name)});
+            code_append_function_call(code, ctx, "LtagHash", 1);
+            code_append_move(code, reg::eax, ctx.allocate());
+            /* Fields and the tag already use the runtime's representation. */
+            code_append_function_call(code, ctx, "Bsexp", sexp.n_items + 2);
+            code_append_move(code, reg::eax, ctx.allocate());
+
         } else {
             abort();
         }
     }
+    if (!ctx.strings.empty()) {
+        code << "\t.section\t.rodata\n";
+        /* Only constructor names (UIDENT) are stored here, they need no escaping. */
+        for (const auto &[label, value] : ctx.strings)
+            code << label << ":\t.string\t\"" << value << "\"\n";
+    }
+    code << "\t.section\t.note.GNU-stack,\"\",@progbits\n";
     return code.str();
 }
 

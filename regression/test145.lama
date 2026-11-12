@@ -1,0 +1,15 @@
+-- S-expressions survive GC in local and global variables across calls.
+var saved = Pair(1, Nil);
+fun make(x) { Node(saved, Pair(x, Nil()), x) }
+fun churn(n) {
+    var keep = Pair(9, Nil), i = 0;
+    while i < n do Pair(i, Nil); i := i + 1 od;
+    length(keep)
+}
+
+write(length(Nil));
+write(length(Nil()));
+write(length(saved));
+write(length(make(7)));
+write(churn(450000));
+write(length(saved))
