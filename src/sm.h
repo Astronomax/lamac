@@ -59,6 +59,10 @@ struct constant {
     int32_t value;
 };
 
+struct string_literal {
+    std::string value;
+};
+
 struct label {
     std::string label;
 };
@@ -103,6 +107,7 @@ using instruction = std::variant<
     load,       /* (x) */
     store,      /* (x) */
     constant,   /* (n) */
+    string_literal,
     label,
     jmp,
     cjmp,

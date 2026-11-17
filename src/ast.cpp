@@ -128,6 +128,9 @@ builder_fn table[nonterminal_max][ALT_CAP] = {
         [](std::vector<build_result> &ch) -> std::optional<build_result> { return std::move(ch[0]); },
         [](std::vector<build_result> &ch) -> std::optional<build_result> { return std::move(ch[0]); },
         [](std::vector<build_result> &ch) -> std::optional<build_result> { return std::move(ch[0]); },
+        [](std::vector<build_result> &ch) -> std::optional<build_result> {
+            return std::make_unique<string_literal>(std::move(std::get<token>(ch[0]).text));
+        },
     },
     /* VAR_DEF_ITEM */ {
         [](std::vector<build_result> &ch) -> std::optional<build_result> {

@@ -172,6 +172,27 @@ compiler::add_string(const std::string &value)
     return label;
 }
 
+std::string
+escape_asm_string(const std::string &value)
+{
+    std::string escaped;
+    for (unsigned char c : value) {
+        if (c == '"' || c == '\\') {
+            escaped += '\\';
+            escaped += c;
+        } else if (c >= 32 && c <= 126) {
+            escaped += c;
+        } else {
+            /* Fixed-width octal avoids consuming digits from the next byte. */
+            escaped += '\\';
+            escaped += static_cast<char>('0' + ((c >> 6) & 7));
+            escaped += static_cast<char>('0' + ((c >> 3) & 7));
+            escaped += static_cast<char>('0' + (c & 7));
+        }
+    }
+    return escaped;
+}
+
 /*
  * Returns the canonical location for the given symbolic stack depth.
  * [ebx, ecx, esi, edi, hardware stack -> ...]
@@ -430,6 +451,7 @@ calculate_entry_depths(const sm::program &program)
             throw std::runtime_error("symbolic stack underflow at instruction "
                                      + std::to_string(pc));
         if (std::holds_alternative<sm::constant>(insn) ||
+            std::holds_alternative<sm::string_literal>(insn) ||
             std::holds_alternative<sm::load>(insn))
             ++depth;
         else if (std::holds_alternative<sm::binary>(insn) ||
@@ -752,6 +774,11 @@ compile(const sm::program &p_sm)
             const auto &call = std::get<sm::call>(insn);
             code_append_function_call(code, ctx, call.label, call.n_args);
             code_append_move(code, reg::eax, ctx.allocate());
+        } else if (std::holds_alternative<sm::string_literal>(insn)) {
+            const auto &literal = std::get<sm::string_literal>(insn);
+            ctx.symbolic_stack.emplace_back(label_address{ctx.add_string(literal.value)});
+            code_append_function_call(code, ctx, "Bstring", 1);
+            code_append_move(code, reg::eax, ctx.allocate());
         } else if (std::holds_alternative<sm::sexp>(insn)) {
             const auto &sexp = std::get<sm::sexp>(insn);
             /* LtagHash in the current runtime accepts at most four characters. */
@@ -794,9 +821,9 @@ compile(const sm::program &p_sm)
     }
     if (!ctx.strings.empty()) {
         code << "\t.section\t.rodata\n";
-        /* Only constructor names (UIDENT) are stored here, they need no escaping. */
+        /* Store constructor names and string literals as C strings. */
         for (const auto &[label, value] : ctx.strings)
-            code << label << ":\t.string\t\"" << value << "\"\n";
+            code << label << ":\t.string\t\"" << escape_asm_string(value) << "\"\n";
     }
     code << "\t.section\t.note.GNU-stack,\"\",@progbits\n";
     return code.str();

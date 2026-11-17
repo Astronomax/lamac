@@ -12,6 +12,7 @@
 #include <sstream>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <spawn.h>
 #include <sys/wait.h>
 
@@ -28,6 +29,7 @@ static const char *term_name(enum terminal t) {
         case LIDENT:     return "lident";
         case UIDENT:     return "uident";
         case DECIMAL:    return "decimal";
+        case STRING_LITERAL: return "string";
         case ASSIGN:     return ":=";
         case INIT:       return "=";
         case DISJUNCTION:return "!!";
@@ -68,6 +70,10 @@ static void dump(const node_ptr &node, int depth) {
     }
     if (auto p = dynamic_cast<number_literal *>(node.get())) {
         std::cout << "number:" << p->num << "\n";
+        return;
+    }
+    if (auto p = dynamic_cast<string_literal *>(node.get())) {
+        std::cout << "string:" << std::quoted(p->value) << "\n";
         return;
     }
     if (auto p = dynamic_cast<binexpr *>(node.get())) {

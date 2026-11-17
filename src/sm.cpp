@@ -227,6 +227,10 @@ compiler::emit(const ast_node &node, value_context context, const std::string &e
         program.code.emplace_back(sm::constant{p->num});
         finish(true);
         return false;
+    } else if (auto p = dynamic_cast<const ::string_literal *>(&node)) {
+        program.code.emplace_back(sm::string_literal{p->value});
+        finish(true);
+        return false;
     } else if (auto p = dynamic_cast<const binexpr *>(&node)) {
         if (p->op == SEMICOLON) {
             auto lhs_exit_label = environment.gen_label();

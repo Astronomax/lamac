@@ -3,6 +3,8 @@
 #include "cassert"
 #include "cctype"
 #include "regexp.h"
+#include <stdexcept>
+#include <utility>
 
 std::vector<token>
 lex(const std::string &src)
@@ -25,6 +27,32 @@ lex(const std::string &src)
         /* Skip whitespace. */
         if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
             pos += 1;
+            continue;
+        }
+        /* A doubled quote denotes one quote inside a Lama string. */
+        if (!block_comment && c == '"') {
+            std::string value;
+            ++pos;
+            bool closed = false;
+            while (pos < n) {
+                if (src[pos] == '"') {
+                    if (pos + 1 < n && src[pos + 1] == '"') {
+                        value += '"';
+                        pos += 2;
+                    } else {
+                        ++pos;
+                        closed = true;
+                        break;
+                    }
+                } else {
+                    if (src[pos] == '\0')
+                        throw std::runtime_error("NUL byte in string literal");
+                    value += src[pos++];
+                }
+            }
+            if (!closed)
+                throw std::runtime_error("unterminated string literal");
+            tokens.push_back({STRING_LITERAL, std::move(value)});
             continue;
         }
         /* Pick the spec with the longest match at pos. */

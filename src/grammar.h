@@ -56,6 +56,7 @@ enum terminal {
     LIDENT,
     UIDENT,
     DECIMAL,
+    STRING_LITERAL,
     ASSIGN,
     INIT,
     DISJUNCTION,
@@ -146,7 +147,7 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
         rule{3, { POSTFIX_EXPRESSION, LBRACE, RBRACE }},
         rule{4, { POSTFIX_EXPRESSION, LBRACE, EXPRESSION_LIST, RBRACE }},
     }},
-    /* PRIMARY : DECIMAL | LIDENT | 'true' | 'false' | 'skip'
+    /* PRIMARY : DECIMAL | LIDENT | 'true' | 'false' | 'skip' | STRING_LITERAL
               | '(' scopeExpression ')' | ifExpression | whileDoExpression
               | doWhileExpression | forExpression | S-expression*/ {{
         rule{1, { DECIMAL }},
@@ -160,6 +161,7 @@ inline std::array<std::array<rule, ALT_CAP>, nonterminal_max> grammar = {{
         rule{1, { DO_WHILE_EXPRESSION }},
         rule{1, { FOR_EXPRESSION }},
         rule{1, { S_EXPRESSION }},
+        rule{1, { STRING_LITERAL }},
     }},
     /* VAR_DEF_ITEM : LIDENT | LIDENT '=' basicExpression */ {{
         rule{1, { LIDENT }},

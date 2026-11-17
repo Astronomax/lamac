@@ -39,6 +39,11 @@ struct number_literal : ast_node {
     number_literal(int32_t n) : num(n) {}
 };
 
+struct string_literal : ast_node {
+    std::string value;
+    string_literal(std::string v) : value(std::move(v)) {}
+};
+
 struct fun_call_node : ast_node {
     node_ptr callee;
     std::vector<node_ptr> args;
